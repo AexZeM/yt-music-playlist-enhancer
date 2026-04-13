@@ -1,0 +1,1319 @@
+if (window.__ytmeEnhancerLoaded) {
+  console.warn('[YTM-Enhancer] Content script already loaded; skipping re-init.');
+} else {
+  window.__ytmeEnhancerLoaded = true;
+
+  'use strict'; // keeps things honest
+
+const Config = Object.freeze({
+  selectors: {
+    searchBox:       'ytmusic-search-box',
+    trackRow:        'ytmusic-responsive-list-item-renderer',
+    trackTitle:      '.title',
+    trackArtist:     '.flex-column yt-formatted-string',
+    trackDuration:   '.fixed-columns yt-formatted-string, .duration',
+    trackThumb:      'img#img',
+    playlistTitle:   'ytmusic-responsive-header-renderer yt-formatted-string.title',
+    actionMenu:      'button[aria-label="Action menu"]',
+    removeOption:    'ytmusic-menu-popup-renderer yt-formatted-string',
+    playlistShelf:   'ytmusic-playlist-shelf-renderer',
+    sentinels:       ['ytmusic-continuation-item-renderer','yt-next-continuation',
+                      '#continuations','iron-scroll-threshold','paper-spinner'],
+    scrollContainers:['ytmusic-playlist-shelf-renderer','ytmusic-section-list-renderer',
+                      'ytmusic-browse-response','#contents.ytmusic-section-list-renderer'],
+    byline:          'yt-formatted-string.byline-text',
+  },
+  thresholds: {
+    dupTitleSim:   0.96,
+    dupArtistSim:  0.92,
+    dupRemixTitle: 0.88,
+    dupRemixArtist:0.90,
+    dupDurationGap:15,    // seconds
+    dupMinTitleLen:4,
+  },
+  lazy: {
+    maxAttempts:   200,
+    waitMs:        350,
+    maxStall:      12,
+    stallWaitMs:   600,
+    scrollAmount:  900,
+    sentinelReset: 600,
+  },
+  highlight: {
+    color:    'rgba(59,130,246,0.35)',
+    duration: 2200,
+  },
+  tagGenres: ['Rock','Indie','Pop','Electronic','R&B','Metal','Classical','Jazz','Hip-Hop','Nightcore','Cover'],
+});
+
+var host   = typeof host   !== 'undefined' ? host   : document.createElement('div');
+var shadow = typeof shadow !== 'undefined' ? shadow : host.attachShadow({ mode: 'open' });
+
+chrome.storage.local.get('ytme_settings', data => {
+  const s = data.ytme_settings || {};
+  window.__ytme = {
+    searchEnabled:     s.toggleSearch     !== false,
+    duplicatesEnabled: s.toggleDuplicates !== false,
+    autoloadEnabled:   s.toggleAutoload   !== false,
+  };
+  if (Array.isArray(s.activeGenres) && s.activeGenres.length) {
+    State.activeGenres = s.activeGenres;
+  }
+  Enhancer.init();
+});
+
+chrome.runtime.onMessage.addListener(msg => {
+  if (msg.type === 'SETTINGS_UPDATED') location.reload();
+});
+
+const State = {
+  allTracks:    [],
+  activeGenres: [],
+  dupGroups:    [],
+  selectedDups: new Set(),
+};
+
+const Util = {
+  sleep: ms => new Promise(r => setTimeout(r, ms)),
+
+  normalizeStr(s) {
+    return (s || '').toLowerCase()
+      .replace(/\s*[\(\[【].*?[\)\]】]\s*/g, '')
+      .replace(/[^\p{L}\p{N}\s]/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  },
+
+  parseDuration(str) {
+    if (!str) return 0;
+    const parts = str.split(':').map(Number);
+    return parts.length === 2 ? parts[0] * 60 + parts[1] : 0;
+  },
+
+  strSimilarity(a, b) {
+    if (a === b) return 1;
+    if (!a || !b) return 0;
+    const longer  = a.length > b.length ? a : b;
+    const shorter = a.length > b.length ? b : a;
+    return (longer.length - Util._levenshtein(longer, shorter)) / longer.length;
+  },
+
+  _levenshtein(a, b) {
+    const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      let prev = i;
+      for (let j = 1; j <= b.length; j++) {
+        const val = a[i-1] === b[j-1] ? dp[j-1] : Math.min(dp[j-1], dp[j], prev) + 1;
+        dp[j-1] = prev; prev = val;
+      }
+      dp[b.length] = prev;
+    }
+    return dp[b.length];
+  },
+
+  getVersionTag(rawTitle) {
+    const t = rawTitle.toLowerCase();
+    if (/\b(remix|rmx|edit|bootleg)\b/.test(t))              return 'remix';
+    if (/\b(live|concert|tour|session|acoustic)\b/.test(t))  return 'live';
+    if (/\b(cover|tribute|karaoke)\b/.test(t))               return 'cover';
+    if (/\b(instrumental|inst\.?)\b/.test(t))                return 'instrumental';
+    return null;
+  },
+};
+
+const PlaylistProcessor = {
+  // grabs all tracks from DOM, stays in the shelf or YTM's suggestion rows sneak in
+  extractTracks() {
+    try {
+      // gotta lock to the shelf, otherwise it picks up autocomplete junk
+      const shelf = document.querySelector(Config.selectors.playlistShelf)
+                 || document.querySelector('ytmusic-browse-response')
+                 || document.querySelector('#contents.ytmusic-section-list-renderer')
+                 || document.body;
+
+      const els = shelf.querySelectorAll(Config.selectors.trackRow);
+      // skip empty placeholder rows YTM likes to render for no reason
+      return Array.from(els).filter(el => {
+        const title = el.querySelector(Config.selectors.trackTitle);
+        return title && title.innerText.trim().length > 0;
+      }).map((el, idx) => {
+        const titleEl    = el.querySelector(Config.selectors.trackTitle);
+        const durationEl = el.querySelector(Config.selectors.trackDuration);
+        const thumbEl    = el.querySelector(Config.selectors.trackThumb);
+        const artistEls  = el.querySelectorAll(Config.selectors.trackArtist);
+
+        const rawTitle  = titleEl?.innerText?.trim()  || '';
+        const rawArtist = artistEls[0]?.innerText?.trim() || '';
+        const duration  = durationEl?.innerText?.trim() || '';
+        const thumb     = thumbEl?.src || '';
+
+        return {
+          idx, element: el, rawTitle, rawArtist, duration, thumb,
+          normTitle:  Util.normalizeStr(rawTitle),
+          normArtist: Util.normalizeStr(rawArtist),
+          versionTag: Util.getVersionTag(rawTitle),
+        };
+      });
+    } catch (err) {
+      console.error('[YTM-Enhancer] extractTracks failed:', err);
+      return [];
+    }
+  },
+
+  /** @returns {number} */
+  getCurrentCount() {
+    const shelf = document.querySelector(Config.selectors.playlistShelf)
+               || document.querySelector('ytmusic-browse-response')
+               || document.body;
+    return shelf.querySelectorAll(Config.selectors.trackRow).length;
+  },
+
+  /** @returns {number|null} */
+  getExpectedCount() {
+    const el = document.querySelector(Config.selectors.byline);
+    // Check the header renderer first as it's more reliable for counts
+    const header = document.querySelector('ytmusic-playlist-sidebar-primary-info-renderer .stats yt-formatted-string');
+    const targetEl = header || el;
+    if (!targetEl) return null;
+    
+    const text  = targetEl.getAttribute('aria-label') || targetEl.innerText || '';
+    const match = text.match(/(\d+)\s*(songs?)/i) || text.match(/(\d[\d,.]*)/);
+    return match ? parseInt(match[1].replace(/[,. ]/g, ''), 10) : null;
+  },
+
+  // scrolls down until everything's loaded — kinda hacky but it works
+  async loadAll(autoloadEnabled) {
+    if (!autoloadEnabled) return;
+
+    const { maxAttempts, waitMs, maxStall, stallWaitMs } = Config.lazy;
+    let lastCount = this.getCurrentCount(), stalledRounds = 0, attempts = 0;
+    // console.log('[YTM-Enhancer] Loading tracks. Expected:', this.getExpectedCount()); 
+    console.log('[YTM-Enhancer] Loading tracks. Expected:', this.getExpectedCount());
+
+    while (attempts++ < maxAttempts) {
+      const count    = this.getCurrentCount();
+      const expected = this.getExpectedCount();
+      if (expected && count >= expected) break;
+
+      this._scrollToLoad();
+      await Util.sleep(waitMs);
+
+      const newCount = this.getCurrentCount();
+      if (newCount > lastCount) {
+        stalledRounds = 0;
+        lastCount     = newCount;
+      } else if (++stalledRounds >= maxStall) {
+        if (!this.getExpectedCount() || this.getCurrentCount() >= this.getExpectedCount()) break;
+        stalledRounds = 0;
+        await Util.sleep(stallWaitMs);
+      }
+    }
+
+    console.log(`[YTM-Enhancer] Total: ${this.getCurrentCount()} tracks`);
+  },
+
+  _scrollToLoad() {
+    const sentinel = Config.selectors.sentinels.map(s => document.querySelector(s)).find(Boolean);
+    if (sentinel) {
+      this._teleportSentinel(sentinel);
+      return;
+    }
+    for (const sel of Config.selectors.scrollContainers) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      const before = el.scrollTop;
+      el.scrollTop += Config.lazy.scrollAmount;
+      if (el.scrollTop !== before) return;
+    }
+  },
+
+  _teleportSentinel(sentinel) {
+    const saved = { position: sentinel.style.position, top: sentinel.style.top, left: sentinel.style.left, opacity: sentinel.style.opacity, pointerEvents: sentinel.style.pointerEvents, zIndex: sentinel.style.zIndex, visibility: sentinel.style.visibility };
+    Object.assign(sentinel.style, { position: 'fixed', top: '50%', left: '50%', opacity: '0', pointerEvents: 'none', zIndex: '-9999', visibility: 'hidden' });
+    setTimeout(() => Object.assign(sentinel.style, saved), Config.lazy.sentinelReset);
+  },
+
+  // finds duplicates by comparing title/artist similarity + duration gap
+  detectDuplicates(tracks) {
+    const { dupTitleSim, dupArtistSim, dupRemixTitle, dupRemixArtist, dupDurationGap, dupMinTitleLen } = Config.thresholds;
+    const groups   = [];
+    const assigned = new Set();
+
+    for (let i = 0; i < tracks.length; i++) {
+      if (assigned.has(i)) continue;
+      const a     = tracks[i];
+      const group = [a];
+      let matchType = 'exact';
+
+      for (let j = i + 1; j < tracks.length; j++) {
+        if (assigned.has(j)) continue;
+        const b = tracks[j];
+        if (a.normTitle.length < dupMinTitleLen || b.normTitle.length < dupMinTitleLen) continue;
+
+        const tSim = Util.strSimilarity(a.normTitle, b.normTitle);
+        const aSim = Util.strSimilarity(a.normArtist, b.normArtist);
+        const dA   = Util.parseDuration(a.duration);
+        const dB   = Util.parseDuration(b.duration);
+        if (dA && dB && Math.abs(dA - dB) > dupDurationGap) continue;
+
+        if (tSim >= dupTitleSim && (aSim >= dupArtistSim || !a.normArtist || !b.normArtist)) {
+          group.push(b); assigned.add(j);
+          if (tSim < 1 || aSim < 1) matchType = 'fuzzy';
+          continue;
+        }
+        if (tSim >= dupRemixTitle && aSim >= dupRemixArtist && (a.versionTag || b.versionTag)) {
+          group.push(b); assigned.add(j); matchType = 'remix';
+        }
+      }
+
+      if (group.length > 1) { assigned.add(i); groups.push({ tracks: group, matchType }); }
+    }
+
+    return groups;
+  },
+};
+
+const UIManager = {
+  el: {},
+
+  build(searchEnabled, duplicatesEnabled) {
+    try {
+      shadow.innerHTML = this._template(searchEnabled, duplicatesEnabled);
+
+      if (!document.getElementById('ytme-tag-picker-styles') && window.__ytmeTagger?.getTagPickerCSS) {
+        const style = document.createElement('style');
+        style.id = 'ytme-tag-picker-styles';
+        style.textContent = window.__ytmeTagger.getTagPickerCSS();
+        document.head.appendChild(style);
+      }
+
+      if (window.__ytmeTagger?.getTagPickerHTML && !document.getElementById('tag-picker')) {
+        const temp = document.createElement('div');
+        temp.innerHTML = window.__ytmeTagger.getTagPickerHTML();
+        document.body.appendChild(temp.firstElementChild);
+      }
+
+      this._cacheRefs(searchEnabled, duplicatesEnabled);
+    } catch (err) {
+      console.error('[YTM-Enhancer] Failed to build shadow DOM:', err);
+    }
+  },
+
+  // redraws the active filter pills in the header
+  renderFilterIndicator() {
+    shadow.querySelectorAll('.active-filter-tag').forEach(el => el.remove());
+    const container = shadow.getElementById('enhancer-container');
+    if (!container) return;
+
+    State.activeGenres.forEach(genre => {
+      const tag = document.createElement('button');
+      tag.className = 'active-filter-tag';
+      tag.innerHTML = `${genre} <span class="filter-tag-x">✕</span>`;
+      tag.addEventListener('click', () => {
+        State.activeGenres = State.activeGenres.filter(g => g !== genre);
+        InteractionHandler.applyFilters();
+        this.renderFilterIndicator();
+        chrome.storage.local.get('ytme_settings', data => {
+          const s = data.ytme_settings || {};
+          s.activeGenres = State.activeGenres;
+          chrome.storage.local.set({ ytme_settings: s });
+        });
+      });
+      container.appendChild(tag);
+    });
+  },
+
+  injectTrackUI(track) {
+    const el = track?.element;
+    if (!el || el.dataset.ytmeTagged) return;
+    el.dataset.ytmeTagged = '1';
+
+    const fixedColumns = el.querySelector('.fixed-columns');
+    const durationEl   = el.querySelector(Config.selectors.trackDuration);
+    if (!fixedColumns || !durationEl) return;
+
+    // genre badge, shows the tag and updates after save
+    const genreBadge = document.createElement('span');
+    genreBadge.className = 'ytme-genre-badge';
+    genreBadge.style.cssText = `
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      padding: 2px 6px;
+      border-radius: 99px;
+      background: rgba(59,130,246,0.12);
+      border: none;
+      color: #60a5fa;
+      white-space: nowrap;
+      flex-shrink: 0;
+      align-self: center;
+      margin-right: 5px;
+      display: none;
+      letter-spacing: 0.03em;
+    `;
+    UIManager._updateGenreBadge(genreBadge, track.idx);
+
+    const tagBtn = document.createElement('button');
+    tagBtn.title = 'Tag this track';
+    tagBtn.innerHTML = '🏷️';
+    tagBtn.style.cssText = `
+      background: rgba(255,255,255,0.05);
+      border: none;
+      border-radius: 8px 2px 8px 2px;
+      color: rgba(255,255,255,0.4);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 2px 5px;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      flex-shrink: 0;
+      height: 22px;
+      align-self: center;
+      margin-right: 6px;
+      line-height: 1;
+      vertical-align: middle;
+    `;
+
+    el.addEventListener('mouseenter', () => { tagBtn.style.opacity = '1'; });
+    el.addEventListener('mouseleave', () => { tagBtn.style.opacity = '0'; });
+
+    fixedColumns.insertBefore(tagBtn, durationEl);
+    fixedColumns.insertBefore(genreBadge, tagBtn);
+
+    // Keep a reference so we can update the badge later
+    el.dataset.ytmeBadgeId = track.idx;
+
+    tagBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const freshTracks = PlaylistProcessor.extractTracks();
+      const freshTrack  = freshTracks.find(t => t.element === el) || track;
+      InteractionHandler.openTagPicker(freshTrack, tagBtn);
+    });
+  },
+
+_updateGenreBadge(badgeEl, trackIdx) {
+    const tags = window.__ytmeTagger?.getTags(trackIdx);
+    if (tags?.genres?.length) {
+      const [first, ...rest] = tags.genres;
+      badgeEl.textContent = rest.length ? `${first} +${rest.length}` : first;
+      badgeEl.style.display = '';
+    } else {
+      badgeEl.style.display = 'none';
+    }
+  },
+
+  // re-sync all badges after a tag change
+  refreshAllBadges() {
+    const freshTracks = PlaylistProcessor.extractTracks();
+    freshTracks.forEach(track => {
+      const el = track.element;
+      if (!el) return;
+      // update badge-id to current index just in case
+      el.dataset.ytmeBadgeId = track.idx;
+      const badge = el.querySelector('.ytme-genre-badge');
+      if (badge) this._updateGenreBadge(badge, track.idx);
+    });
+  },
+
+  injectAllTrackUI() {
+    const tracks = PlaylistProcessor.extractTracks();
+    tracks.forEach(t => this.injectTrackUI(t));
+  },
+
+  // scroll to track and flash it so you can actually find it
+  goToTrack(element) {
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    element.style.transition = `background-color 0.4s ease`;
+    element.style.backgroundColor = Config.highlight.color;
+    setTimeout(() => { element.style.backgroundColor = ''; }, Config.highlight.duration);
+  },
+
+  // ── Private ──────────────────────────────────────────
+
+  _cacheRefs(searchEnabled, duplicatesEnabled) {
+    const $ = id => shadow.getElementById(id);
+    const $doc = id => document.getElementById(id); // outside shadow DOM
+    this.el = {
+      input:        searchEnabled     ? $('playlist-input')    : null,
+      findDupBtn:   duplicatesEnabled ? $('find-duplicates')   : null,
+      popup:        $('results-popup'),
+      popupList:    $('popup-list'),
+      popupTitle:   $('popup-title'),
+      popupClose:   $('popup-close'),
+      dupOverlay:   $('dup-overlay'),
+      dupClose:     $('dup-close'),
+      dupSubtitle:  $('dup-subtitle'),
+      dupScanning:  $('dup-scanning'),
+      scanLabel:    $('scan-label'),
+      scanFill:     $('scan-progress-fill'),
+      dupToolbar:   $('dup-toolbar'),
+      dupBody:      $('dup-body'),
+      dupEmpty:     $('dup-empty'),
+      dupFooter:    $('dup-footer'),
+      dupCountBadge:$('dup-count-badge'),
+      selCount:     $('sel-count-label'),
+      footerInfo:   $('footer-info'),
+      btnSelectAll: $('btn-select-all'),
+      btnAutoKeep:  $('btn-auto-keep'),
+      btnRescan:    $('btn-rescan'),
+      btnRemoveSel: $('btn-remove-selected'),
+      btnCancel:    $('btn-cancel'),
+      btnConfirmDel:$('btn-confirm-delete'),
+      tagPicker:    $doc('tag-picker'),
+      tagTitle:     $doc('tag-picker-title'),
+      tagArtist:    $doc('tag-picker-artist'),
+      tagPills:     $doc('tag-picker-pills'),
+      tagSave:      $doc('tag-picker-save'),
+      tagCancel:    $doc('tag-picker-cancel'),
+      tagClear:     $doc('tag-picker-clear'),
+      ctxMenu:      $('ytme-context-menu'),
+      ctxTagBtn:    $('ctx-tag'),
+    };
+  },
+
+  // TODO: It was my first time designing a UI, and I didn't liked. I will change it later.
+  _template(searchEnabled, duplicatesEnabled) {
+    const searchHTML = searchEnabled ? `
+      <div id="enhancer-search-bar">
+        <input type="text" id="playlist-input" placeholder="Query a track!">
+      </div>` : '';
+    const dupHTML = duplicatesEnabled ? `
+      <button id="find-duplicates"><span>⚡</span> SCAN</button>` : '';
+
+    return `
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600&display=swap');
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+  #enhancer-container{display:flex;align-items:center;flex-wrap:nowrap}
+
+  /* ── BORDERLESS SEARCH BAR ── */
+  #enhancer-search-bar{
+    position:relative; width:220px; height:36px;
+    background:rgba(255,255,255,0.04);
+    backdrop-filter:blur(24px);
+    border:none;
+    border-left: 1px solid rgba(0,240,255,0.3);
+    border-radius: 12px 0 0 12px;
+    clip-path:polygon(0 0, 92% 0, 100% 50%, 92% 100%, 0 100%);
+    display:flex; align-items:center; padding:0 24px 0 14px; margin-left:15px;
+    transition:width .3s cubic-bezier(0.16,1,0.3,1), background .2s;
+  }
+  #enhancer-search-bar:focus-within{width:300px; background:rgba(255,255,255,0.08);}
+  input{background:transparent; border:none; color:#fff; outline:none; width:100%; font-size:12px; font-family:'DM Mono',monospace;}
+  ::placeholder{color:rgba(255,255,255,0.2); letter-spacing:0.1em;}
+
+  /* ── DUPLICATE BUTTON ── */
+  #find-duplicates{
+    position:relative; height:36px;
+    background:rgba(255,255,255,0.04);
+    backdrop-filter:blur(24px);
+    border:none;
+    border-right: 1px solid rgba(255,255,255,0.2);
+    border-radius: 0 12px 12px 0;
+    clip-path:polygon(8% 0, 100% 0, 100% 100%, 8% 100%, 0 50%);
+    display:flex; align-items:center; padding:0 16px 0 24px; margin-left:4px;
+    color:rgba(255,255,255,0.6); cursor:pointer; font-size:11px; font-family:'DM Mono',monospace; font-weight:500; letter-spacing:0.1em;
+    transition:color .2s, background .2s;
+  }
+  #find-duplicates:hover{background:rgba(255,255,255,0.1); color:#fff;}
+
+  /* ── FILTER TAGS ── */
+  .active-filter-tag{display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:9px;padding:4px 12px;background:rgba(0,240,255,0.05);color:#00f0ff;border:none;clip-path:polygon(4px 0,100% 0,calc(100% - 4px) 100%,0 100%);cursor:pointer;transition:background .2s;margin-left:8px;flex-shrink:0}
+  .active-filter-tag:hover{background:rgba(0,240,255,0.15);}
+  .filter-tag-x{font-size:8px;opacity:.5}
+
+  /* ── RESULTS POPUP (GLASS & SHADOW) ── */
+  #results-popup{display:none;position:fixed;top:64px;left:50%;transform:translateX(-50%);background:rgba(5,7,10,0.85);backdrop-filter:blur(40px);border:none;border-radius:12px;border-top:2px solid #00f0ff;padding:0;min-width:400px;max-width:560px;max-height:400px;overflow-y:auto;z-index:2147483647;box-shadow:0 30px 60px rgba(0,0,0,0.9);scrollbar-width:none;}
+  #results-popup::-webkit-scrollbar{display:none;}
+  #results-popup.visible{display:block;}
+  #popup-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 8px;background:rgba(255,255,255,0.02);}
+  #popup-title{font-family:'DM Mono',monospace;font-size:9px;color:rgba(255,255,255,0.3);letter-spacing:0.2em;}
+  #popup-close{background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:12px;transition:color .15s;}
+  #popup-close:hover{color:#fff;}
+  
+  .result-item{display:flex;align-items:center;gap:12px;padding:12px 20px;background:transparent;cursor:pointer;transition:all .2s;border-left:2px solid transparent;}
+  .result-item:hover{background:rgba(255,255,255,0.03);border-left-color:#00f0ff;padding-left:24px;}
+  .result-index{color:rgba(255,255,255,0.1);font-size:9px;min-width:18px;text-align:right;font-family:'DM Mono',monospace;}
+  .result-info{display:flex;flex-direction:column;gap:2px;overflow:hidden;}
+  .result-title{color:rgba(255,255,255,0.9);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:'DM Sans',sans-serif;}
+  .result-artist{color:rgba(255,255,255,0.3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:'DM Mono',monospace;}
+  .result-match-badge{margin-left:auto;font-size:8px;padding:3px 8px;background:rgba(255,255,255,0.03);color:rgba(255,255,255,0.4);letter-spacing:0.1em;font-family:'DM Mono',monospace;}
+
+  /* ── DUPLICATE MODAL ── */
+  #dup-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:2147483646;backdrop-filter:blur(10px);}
+  #dup-overlay.visible{display:flex;align-items:center;justify-content:center;}
+  #dup-modal{background:rgba(5,7,10,0.85);backdrop-filter:blur(40px);border:1px solid rgba(0,240,255,0.2);border-radius:16px;width:min(720px,95vw);max-height:85vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 40px 100px rgba(0,0,0,1);}
+  
+  #dup-header{display:flex;align-items:center;justify-content:space-between;padding:24px 32px 20px;background:linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 100%);}
+  #dup-header-left{display:flex;flex-direction:column;gap:4px;}
+  #dup-title{font-family:'DM Sans',sans-serif;font-size:16px;font-weight:600;color:#fff;letter-spacing:0.05em;}
+  #dup-subtitle{font-family:'DM Mono',monospace;font-size:9px;color:#00f0ff;letter-spacing:0.2em;}
+  #dup-close{background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:16px;transition:color .15s;}
+  #dup-close:hover{color:#fff;}
+  
+  #dup-scanning{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:64px 20px;gap:20px;}
+  .scan-ring{width:40px;height:40px;border:1px solid rgba(255,255,255,0.05);border-top-color:#00f0ff;border-radius:50%;animation:spin 0.6s linear infinite;}
+  #scan-label{font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.4);letter-spacing:0.15em;}
+  #scan-progress-bar{width:200px;height:2px;background:rgba(255,255,255,0.05);overflow:hidden;}
+  #scan-progress-fill{height:100%;background:#00f0ff;width:0%;transition:width 0.2s;}
+
+  #dup-toolbar{display:none;align-items:center;justify-content:space-between;padding:12px 32px;background:rgba(255,255,255,0.01);border-bottom:1px solid rgba(255,255,255,0.02);}
+  #dup-toolbar.visible{display:flex;}
+  .toolbar-left, .toolbar-right{display:flex;align-items:center;gap:12px;}
+  .dup-count-badge{font-family:'DM Mono',monospace;font-size:9px;color:#00f0ff;padding:4px 8px;background:rgba(0,240,255,0.05);letter-spacing:0.1em;}
+  .sel-count{font-family:'DM Mono',monospace;font-size:9px;color:rgba(255,255,255,0.4);}
+  
+  .tb-btn{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;padding:8px 16px;cursor:pointer;border:none;background:rgba(255,255,255,0.03);color:rgba(255,255,255,0.5);transition:all .2s;border-radius:8px;}
+  .tb-btn:hover{background:rgba(255,255,255,0.08);color:#fff;}
+  .tb-btn-danger{background:rgba(239,68,68,0.05);color:#ef4444;}
+  .tb-btn-danger:hover{background:rgba(239,68,68,0.15);}
+  .tb-btn-danger:disabled{opacity:0.2;cursor:not-allowed;}
+
+  #dup-body{overflow-y:auto;flex:1;scrollbar-width:none;}
+  #dup-body::-webkit-scrollbar{display:none;}
+  #dup-empty{display:none;flex-direction:column;align-items:center;justify-content:center;padding:64px 20px;gap:12px;}
+  #dup-empty.visible{display:flex;}
+  .empty-icon{font-size:24px;opacity:0.3;filter:grayscale(1);}
+  .empty-text{font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.4);letter-spacing:0.1em;}
+
+  .dup-group{margin-bottom:12px;}
+  .dup-group-header{display:flex;align-items:center;gap:12px;padding:8px 32px;background:rgba(255,255,255,0.01);}
+  .group-label{font-family:'DM Mono',monospace;font-size:8px;color:rgba(255,255,255,0.3);letter-spacing:0.2em;}
+  
+  .dup-track-row{display:flex;align-items:center;gap:16px;padding:12px 32px;background:transparent;border-left:2px solid transparent;cursor:pointer;transition:all .2s;}
+  .dup-track-row:hover{background:rgba(255,255,255,0.02);border-left-color:rgba(255,255,255,0.2);}
+  .dup-track-row.selected{background:rgba(239,68,68,0.03);border-left-color:#ef4444;}
+  .dup-track-row.keep-row{background:rgba(0,240,255,0.02);border-left-color:#00f0ff;}
+  
+  .track-checkbox{appearance:none;width:12px;height:12px;border:1px solid rgba(255,255,255,0.2);border-radius:0;cursor:pointer;position:relative;}
+  .track-checkbox:checked{background:#ef4444;border-color:#ef4444;}
+  .keep-checkbox:checked{background:#00f0ff;border-color:#00f0ff;}
+  
+  .track-thumb{width:40px;height:40px;background:rgba(255,255,255,0.02);display:flex;align-items:center;justify-content:center;font-size:10px;color:rgba(255,255,255,0.1);overflow:hidden;}
+  .track-info{flex:1;overflow:hidden;display:flex;flex-direction:column;gap:2px;}
+  .track-title{font-family:'DM Sans',sans-serif;font-size:13px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .track-meta{font-family:'DM Mono',monospace;font-size:9px;color:rgba(255,255,255,0.3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  
+  .track-tag{font-family:'DM Mono',monospace;font-size:8px;padding:4px 8px;letter-spacing:0.1em;}
+  .tag-keep{color:#00f0ff;background:rgba(0,240,255,0.05);}
+  .tag-delete{color:#ef4444;background:rgba(239,68,68,0.05);}
+
+  #dup-footer{display:none;align-items:center;justify-content:flex-end;gap:12px;padding:20px 32px;background:rgba(255,255,255,0.01);}
+  #dup-footer.visible{display:flex;}
+
+  /* ── CONTEXT MENU ── */
+  #ytme-context-menu{display:none;position:fixed;background:rgba(5,7,10,0.95);border:1px solid rgba(255,255,255,0.05);padding:8px;z-index:2147483647;}
+  #ytme-context-menu.visible{display:block;}
+  .ctx-item{font-family:'DM Mono',monospace;font-size:10px;color:rgba(255,255,255,0.6);background:none;border:none;padding:8px 12px;width:100%;text-align:left;cursor:pointer;text-transform:uppercase;letter-spacing:0.05em;}
+  .ctx-item:hover{background:rgba(255,255,255,0.05);color:#fff;}
+
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+
+<div id="enhancer-container">
+  ${searchHTML}
+  ${dupHTML}
+</div>
+
+<div id="ytme-context-menu">
+  <button class="ctx-item" id="ctx-tag">Tag track</button>
+</div>
+
+<div id="results-popup">
+  <div id="popup-header"><span id="popup-title">QUERY RESULTS</span><button id="popup-close">✕</button></div>
+  <div id="popup-list"></div>
+</div>
+
+<div id="dup-overlay">
+  <div id="dup-modal">
+    <div id="dup-header">
+      <div id="dup-header-left">
+        <span id="dup-title">Duplicate Scanner</span>
+        <span id="dup-subtitle">ANALYZING DATASTREAM…</span>
+      </div>
+      <button id="dup-close">✕</button>
+    </div>
+    <div id="dup-scanning">
+      <div class="scan-ring"></div>
+      <div id="scan-progress-bar"><div id="scan-progress-fill"></div></div>
+      <span id="scan-label">INITIALIZING…</span>
+    </div>
+    <div id="dup-toolbar">
+      <div class="toolbar-left">
+        <span class="dup-count-badge" id="dup-count-badge">0 groups</span>
+        <span class="sel-count" id="sel-count-label"></span>
+      </div>
+      <div class="toolbar-right">
+        <button class="tb-btn" id="btn-select-all">Select All</button>
+        <button class="tb-btn" id="btn-auto-keep">Auto Keep</button>
+        <button class="tb-btn" id="btn-rescan">Rescan</button>
+        <button class="tb-btn tb-btn-danger" id="btn-remove-selected" disabled>Delete Selected</button>
+      </div>
+    </div>
+    <div id="dup-empty">
+      <span class="empty-icon">✓</span>
+      <span class="empty-text">Dupi-dupi can't find anything! You're all clear.</span>
+    </div>
+    <div id="dup-body"></div>
+    <div id="dup-footer">
+      <span class="footer-info" id="footer-info" style="font-family:'DM Mono',monospace;font-size:9px;color:rgba(255,255,255,0.3);margin-right:auto;"></span>
+      <button class="tb-btn" id="btn-cancel">Cancel</button>
+      <button class="tb-btn tb-btn-danger" id="btn-confirm-delete" disabled>Execute Delete</button>
+    </div>
+  </div>
+</div>`;
+  },
+};
+
+const InteractionHandler = {
+  _tagPickerTrack:    null,
+  _tagPickerSelected: new Set(),
+  _ctxTarget:         null,
+  _ctxAnchor:         null,
+
+  /** Wire up all event listeners after shadow DOM is ready. */
+  bindAll() {
+    const { el } = UIManager;
+
+    // YTM intercepts keyboard events, stop that
+    const stopYT = e => e.stopPropagation();
+    if (el.input) {
+      el.input.addEventListener('keydown',  stopYT);
+      el.input.addEventListener('keyup',    stopYT);
+      el.input.addEventListener('keypress', stopYT);
+      el.input.addEventListener('input',    () => this._onSearch());
+    }
+
+    if (el.popupClose) el.popupClose.addEventListener('click', () => this._closePopup());
+
+    if (el.findDupBtn)   el.findDupBtn.addEventListener('click',   () => this._openDupModal());
+    if (el.dupClose)     el.dupClose.addEventListener('click',     () => this._closeDupModal());
+    if (el.btnCancel)    el.btnCancel.addEventListener('click',    () => this._closeDupModal());
+    if (el.dupOverlay)   el.dupOverlay.addEventListener('click',   e => { if (e.target === el.dupOverlay) this._closeDupModal(); });
+    if (el.btnRescan)    el.btnRescan.addEventListener('click',    () => this._runDupScan());
+    if (el.btnSelectAll) el.btnSelectAll.addEventListener('click', () => this._selectAllDups());
+    if (el.btnAutoKeep)  el.btnAutoKeep.addEventListener('click',  () => this._autoKeepFirst());
+    if (el.btnRemoveSel) el.btnRemoveSel.addEventListener('click', () => this._confirmDelete());
+    if (el.btnConfirmDel)el.btnConfirmDel.addEventListener('click',() => this._confirmDelete());
+
+    if (el.tagCancel) el.tagCancel.addEventListener('click', () => this._closeTagPicker());
+    if (el.tagSave)   el.tagSave.addEventListener('click',   () => this._saveTag());
+    if (el.tagClear)  el.tagClear.addEventListener('click',  () => this._clearTag());
+    if (el.ctxTagBtn) el.ctxTagBtn.addEventListener('click', () => {
+      el.ctxMenu?.classList.remove('visible');
+      if (this._ctxTarget) this.openTagPicker(this._ctxTarget, this._ctxAnchor);
+    });
+
+    // close on outside click
+    document.addEventListener('click', e => {
+      if (!shadow.contains(e.target)) this._closePopup();
+      if (el.ctxMenu?.classList.contains('visible') && !el.ctxMenu.contains(e.target)) el.ctxMenu.classList.remove('visible');
+    });
+
+    window.addEventListener('ytme:tags-updated', () => {
+      UIManager.refreshAllBadges();
+      if (State.activeGenres.length) this.applyFilters();
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'TAGS_UPDATED', stats: window.__ytmeTagger?.getStats(State.allTracks) },
+          () => { chrome.runtime.lastError; }
+        );
+      } catch { /* popup not open */ }
+    });
+  },
+
+  // shows/hides tracks based on whats selected
+  applyFilters() {
+    const shelf = document.querySelector(Config.selectors.playlistShelf)
+               || document.querySelector('ytmusic-browse-response')
+               || document.body;
+    const trackElements = Array.from(shelf.querySelectorAll(Config.selectors.trackRow));
+    if (!State.activeGenres.length) {
+      window.__ytmeTagger?.clearFilters(trackElements);
+    } else {
+      window.__ytmeTagger?.filterTracks(trackElements, State.activeGenres);
+    }
+    UIManager.renderFilterIndicator();
+    return { visible: trackElements.filter(el => el.style.display !== 'none').length, total: trackElements.length };
+  },
+
+
+  openTagPicker(track, anchorEl) {
+    if (!window.__ytmeTagger) return;
+    const { el } = UIManager;
+    if (!el.tagPicker) return;
+
+    this._tagPickerTrack    = track;
+    this._tagPickerSelected = new Set(window.__ytmeTagger.getTags(track.idx)?.genres || []);
+
+    if (el.tagTitle)  el.tagTitle.textContent  = track.rawTitle  || 'Unknown';
+    if (el.tagArtist) el.tagArtist.textContent = track.rawArtist || '';
+
+    if (el.tagPills) {
+      el.tagPills.innerHTML = '';
+      Config.tagGenres.forEach(genre => {
+        const pill = document.createElement('button');
+        pill.className   = 'tag-pill' + (this._tagPickerSelected.has(genre) ? ' selected' : '');
+        pill.textContent = genre;
+        pill.addEventListener('click', () => {
+          this._tagPickerSelected.has(genre)
+            ? (this._tagPickerSelected.delete(genre), pill.classList.remove('selected'))
+            : (this._tagPickerSelected.add(genre),    pill.classList.add('selected'));
+        });
+        el.tagPills.appendChild(pill);
+      });
+    }
+
+    const PICKER_W = 360;
+    const PICKER_H = 320;
+    const rect   = anchorEl.getBoundingClientRect();
+    const margin = 8;
+
+    // Align picker's right edge to anchor's right edge, so it opens to the left
+    let left = rect.right - PICKER_W;
+    let top  = rect.bottom + 12;
+
+    left = Math.max(margin, Math.min(left, window.innerWidth  - PICKER_W - margin));
+    if (top + PICKER_H > window.innerHeight - margin) top = rect.top - PICKER_H - 12;
+    top  = Math.max(margin, top);
+
+    el.tagPicker.style.top  = `${top}px`;
+    el.tagPicker.style.left = `${left}px`;
+    el.tagPicker.style.display = 'block';
+  },
+
+  // ── Private ──────────────────────────────────────────
+
+  _closePopup() {
+    UIManager.el.popup?.classList.remove('visible');
+    if (UIManager.el.popupList) UIManager.el.popupList.innerHTML = '';
+  },
+
+  _closeTagPicker() {
+    if (UIManager.el.tagPicker) UIManager.el.tagPicker.style.display = 'none';
+    this._tagPickerTrack = null;
+  },
+
+  async _saveTag() {
+    if (!this._tagPickerTrack || !window.__ytmeTagger) return;
+    try {
+      await window.__ytmeTagger.saveManualTag(this._tagPickerTrack, [...this._tagPickerSelected]);
+    } catch (err) {
+      console.error('[YTM-Enhancer] Failed to save manual tag:', err);
+    }
+    this._closeTagPicker();
+  },
+
+  async _clearTag() {
+    if (!this._tagPickerTrack || !window.__ytmeTagger) return;
+    try {
+      await window.__ytmeTagger.removeManualTag(this._tagPickerTrack);
+      window.dispatchEvent(new CustomEvent('ytme:tags-updated'));
+    } catch (err) {
+      console.error('[YTM-Enhancer] Failed to remove manual tag:', err);
+    }
+    this._closeTagPicker();
+  },
+
+  _onSearch() {
+    const { el } = UIManager;
+    const query = el.input?.value.trim().toLowerCase() || '';
+    console.log('query:', query); 
+    if (query.length < 2) { this._closePopup(); return; }
+
+    // stay in the shelf, not YTM's suggestion dropdowns
+    const shelf = document.querySelector(Config.selectors.playlistShelf)
+               || document.querySelector('ytmusic-browse-response')
+               || document.body;
+
+    const tracks = Array.from(shelf.querySelectorAll(Config.selectors.trackRow)).map(el => ({
+      element: el,
+      title: el.querySelector(Config.selectors.trackTitle)?.innerText.trim().toLowerCase() || '',
+    }));
+    if (!tracks.length) return;
+
+    let results = [], matchType = 'starts';
+    results = tracks.filter(t => t.title.startsWith(query));
+    if (!results.length) { matchType = 'includes'; results = tracks.filter(t => t.title.includes(query)); }
+    if (!results.length && typeof Fuse !== 'undefined') {
+      matchType = 'fuzzy';
+      const fuse = new Fuse(tracks, { keys: ['title'], threshold: 0.4, distance: 5, ignoreLocation: false, minMatchCharLength: 3, includeScore: true });
+      results = fuse.search(query).filter(r => r.score < 0.6);
+    }
+
+    if (!results.length) { this._closePopup(); return; }
+    if (results.length === 1) {
+      const track = results[0].item ?? results[0];
+      this._closePopup();
+      UIManager.goToTrack(track.element);
+      return;
+    }
+    this._showPopup(results, matchType);
+  },
+
+  _showPopup(results, matchType) {
+    const { el } = UIManager;
+    if (!el.popupList || !el.popupTitle || !el.popup) return;
+    el.popupList.innerHTML = '';
+    el.popupTitle.textContent = `${results.length} result${results.length !== 1 ? 's' : ''} found`;
+    results.forEach((r, i) => {
+      const track = r.item ?? r;
+      const type  = r.score !== undefined ? 'fuzzy' : matchType === 'starts' ? 'exact' : 'partial';
+      const item  = document.createElement('div');
+      item.className = 'result-item';
+      const artistEls = track.element.querySelectorAll(Config.selectors.trackArtist);
+      const artist    = artistEls[0]?.innerText?.trim() || '';
+      const badge     = type === 'exact' ? 'badge-exact' : type === 'partial' ? 'badge-partial' : 'badge-fuzzy';
+      const label     = type === 'exact' ? 'Exact'       : type === 'partial' ? 'Contains'      : 'Fuzzy';
+      item.innerHTML  = `<span class="result-index">${i+1}</span><div class="result-info"><span class="result-title">${track.title}</span>${artist ? `<span class="result-artist">${artist}</span>` : ''}</div><span class="result-match-badge ${badge}">${label}</span>`;
+      item.addEventListener('click', () => { this._closePopup(); UIManager.goToTrack(track.element); });
+      el.popupList.appendChild(item);
+    });
+    el.popup.classList.add('visible');
+  },
+
+  _openDupModal() {
+    const { el } = UIManager;
+    if (!el.dupOverlay) return;
+    el.dupOverlay.classList.add('visible');
+    document.body.style.overflow = 'hidden';
+    this._runDupScan();
+  },
+
+  _closeDupModal() {
+    const { el } = UIManager;
+    if (!el.dupOverlay) return;
+    el.dupOverlay.classList.remove('visible');
+    document.body.style.overflow = '';
+    State.selectedDups.clear();
+  },
+
+  async _runDupScan() {
+    const { el } = UIManager;
+    if (!el.dupBody) return;
+
+    el.dupBody.innerHTML = '';
+    el.dupEmpty?.classList.remove('visible');
+    el.dupToolbar?.classList.remove('visible');
+    el.dupFooter?.classList.remove('visible');
+    if (el.dupScanning) el.dupScanning.style.display = 'flex';
+    if (el.dupSubtitle) el.dupSubtitle.textContent   = 'SCANNING PLAYLIST…';
+    if (el.scanFill)    el.scanFill.style.width       = '0%';
+    if (el.scanLabel)   el.scanLabel.textContent      = 'INITIALIZING…';
+    State.selectedDups.clear();
+
+    await Util.sleep(80);
+    const tracks = PlaylistProcessor.extractTracks();
+    if (el.scanLabel) el.scanLabel.textContent = `ANALYZING ${tracks.length} TRACKS…`;
+
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress = Math.min(progress + Math.random() * 8, 85);
+      if (el.scanFill) el.scanFill.style.width = `${progress}%`;
+    }, 120);
+
+    await Util.sleep(60);
+    State.dupGroups = PlaylistProcessor.detectDuplicates(tracks);
+    clearInterval(interval);
+    if (el.scanFill)  el.scanFill.style.width  = '100%';
+    if (el.scanLabel) el.scanLabel.textContent = 'COMPLETE';
+    await Util.sleep(300);
+    if (el.dupScanning) el.dupScanning.style.display = 'none';
+    this._renderDupResults();
+  },
+
+  _renderDupResults() {
+    const { el } = UIManager;
+    if (!el.dupBody) return;
+    el.dupBody.innerHTML = '';
+    State.selectedDups.clear();
+
+    if (!State.dupGroups.length) {
+      el.dupEmpty?.classList.add('visible');
+      if (el.dupSubtitle) el.dupSubtitle.textContent = 'COMPLETE — NO DUPLICATES';
+      return;
+    }
+
+    if (el.dupSubtitle)   el.dupSubtitle.textContent   = `Dupi-dupi found ${State.dupGroups.length} duplicate group${State.dupGroups.length > 1 ? 's' : ''}!`;
+    if (el.dupCountBadge) el.dupCountBadge.textContent = `${State.dupGroups.length} group${State.dupGroups.length > 1 ? 's' : ''}`;
+    el.dupToolbar?.classList.add('visible');
+    el.dupFooter?.classList.add('visible');
+
+    State.dupGroups.forEach((group, gIdx) => {
+      const groupEl = document.createElement('div');
+      groupEl.className = 'dup-group';
+      groupEl.style.animationDelay = `${gIdx * 0.04}s`;
+      const label = group.matchType === 'exact' ? 'Exact Match' : group.matchType === 'fuzzy' ? 'Fuzzy Match' : 'Version Variant';
+      const cls   = group.matchType === 'exact' ? 'match-exact' : group.matchType === 'fuzzy' ? 'match-fuzzy' : 'match-remix';
+      groupEl.innerHTML = `<div class="dup-group-header"><span class="group-label">Group ${gIdx+1}</span><span class="group-count">${group.tracks.length} copies</span><span class="group-match-type ${cls}">${label}</span></div>`;
+      group.tracks.forEach((track, tIdx) => groupEl.appendChild(this._buildDupRow(track, tIdx === 0)));
+      el.dupBody.appendChild(groupEl);
+    });
+
+    this._updateDupUI();
+  },
+
+  _buildDupRow(track, isFirst) {
+    const row = document.createElement('div');
+    row.className = `dup-track-row${isFirst ? ' keep-row' : ''}`;
+    row.dataset.trackIdx = track.idx;
+
+    const cb = document.createElement('input');
+    cb.type      = 'checkbox';
+    cb.className = `track-checkbox${isFirst ? ' keep-checkbox' : ''}`;
+    if (!isFirst) { cb.checked = true; State.selectedDups.add(track.idx); row.classList.add('selected'); }
+
+    cb.addEventListener('change', () => {
+      const tagEl = row.querySelector('[data-tag]');
+      if (cb.checked) {
+        State.selectedDups.add(track.idx);
+        row.classList.add('selected'); row.classList.remove('keep-row');
+        if (tagEl) { tagEl.className = 'track-tag tag-delete'; tagEl.textContent = 'DELETE'; }
+      } else {
+        State.selectedDups.delete(track.idx);
+        row.classList.remove('selected');
+        if (isFirst) row.classList.add('keep-row');
+        if (tagEl) { tagEl.className = 'track-tag tag-keep'; tagEl.textContent = 'KEEP'; }
+      }
+      this._updateDupUI();
+    });
+
+    row.addEventListener('click', e => { if (e.target === cb) return; cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); });
+
+    const thumb = document.createElement('div');
+    thumb.className = 'track-thumb';
+    if (track.thumb?.startsWith('http')) {
+      const img = document.createElement('img');
+      img.src = track.thumb;
+      img.style.cssText = 'width:36px;height:36px;object-fit:cover;display:block;';
+      img.onerror = () => { thumb.removeChild(img); thumb.textContent = '♪'; };
+      thumb.appendChild(img);
+    } else { thumb.textContent = '♪'; }
+
+    const info = document.createElement('div');
+    info.className = 'track-info';
+    info.innerHTML = `<div class="track-title">${track.rawTitle||'—'}</div><div class="track-meta">${track.rawArtist||''}${track.rawArtist&&track.duration?' · ':''}${track.duration||''}</div>`;
+
+    const tag = document.createElement('span');
+    if (isFirst) { tag.className = 'track-tag tag-first'; tag.textContent = 'FIRST'; }
+    else         { tag.className = 'track-tag tag-delete'; tag.textContent = 'DELETE'; tag.dataset.tag = '1'; }
+
+    row.appendChild(cb); row.appendChild(thumb); row.appendChild(info); row.appendChild(tag);
+    return row;
+  },
+
+  _updateDupUI() {
+    const { el } = UIManager;
+    const count = State.selectedDups.size;
+    if (el.selCount)    el.selCount.textContent    = count ? `${count} track${count>1?'s':''} selected` : '';
+    if (el.btnRemoveSel) el.btnRemoveSel.disabled  = count === 0;
+    if (el.btnConfirmDel) {
+      el.btnConfirmDel.disabled    = count === 0;
+      el.btnConfirmDel.textContent = count ? `🗑 Delete ${count} Track${count>1?'s':''}` : '🗑 Delete Selected';
+    }
+    if (el.footerInfo) el.footerInfo.textContent = count
+      ? `${count} of ${State.dupGroups.reduce((a,g) => a+g.tracks.length, 0)} duplicates marked`
+      : '';
+  },
+
+  _selectAllDups() {
+    shadow.querySelectorAll('.dup-track-row:not(.keep-row) .track-checkbox').forEach(cb => {
+      if (!cb.checked) { cb.checked = true; cb.dispatchEvent(new Event('change')); }
+    });
+  },
+
+  _autoKeepFirst() {
+    const body = UIManager.el.dupBody;
+    State.dupGroups.forEach(group => {
+      group.tracks.forEach((track, tIdx) => {
+        const row = body?.querySelector(`[data-track-idx="${track.idx}"]`);
+        const cb  = row?.querySelector('.track-checkbox');
+        if (!cb) return;
+        const should = tIdx !== 0;
+        if (cb.checked !== should) { cb.checked = should; cb.dispatchEvent(new Event('change')); }
+      });
+    });
+  },
+
+  async _confirmDelete() {
+    if (!State.selectedDups.size) return;
+    const count = State.selectedDups.size;
+    if (!confirm(`Delete ${count} track${count>1?'s':''} from this playlist? This cannot be undone.`)) return;
+
+    const { el } = UIManager;
+    if (el.btnConfirmDel) { el.btnConfirmDel.disabled = true; el.btnConfirmDel.textContent = 'Deleting…'; }
+    if (el.btnRemoveSel)    el.btnRemoveSel.disabled = true;
+
+    // descending order so removing doesnt mess up indices
+    const toRemove = State.dupGroups.flatMap(g => g.tracks)
+      .filter(t => State.selectedDups.has(t.idx))
+      .sort((a, b) => b.idx - a.idx);
+
+    let removed = 0;
+    for (const track of toRemove) {
+      const row = el.dupBody?.querySelector(`[data-track-idx="${track.idx}"]`);
+      await this._removeTrack(track.element);
+      if (row) row.style.opacity = '0.3';
+      removed++;
+      if (el.dupSubtitle) el.dupSubtitle.textContent = `REMOVING ${removed}/${count}…`;
+      await Util.sleep(400);
+    }
+
+    State.dupGroups = [];
+    State.selectedDups.clear();
+    if (el.dupSubtitle) el.dupSubtitle.textContent = `✓ REMOVED ${count} TRACK${count>1?'S':''}`;
+    await Util.sleep(800);
+    this._closeDupModal();
+  },
+
+  async _removeTrack(element) {
+    try {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      await Util.sleep(400);
+      element.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }));
+      element.dispatchEvent(new PointerEvent('pointerover',  { bubbles: true }));
+      element.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      element.dispatchEvent(new MouseEvent('mouseover',  { bubbles: true }));
+      await Util.sleep(300);
+      const menuBtn = element.querySelector(Config.selectors.actionMenu);
+      if (!menuBtn) { console.warn('[YTM-Enhancer] Action menu not found'); return; }
+      menuBtn.click();
+      await Util.sleep(600);
+      const removeItem = Array.from(document.querySelectorAll(Config.selectors.removeOption))
+        .find(el => el.innerText.trim() === 'Remove from playlist');
+      if (!removeItem) { console.warn('[YTM-Enhancer] Remove option not found'); return; }
+      removeItem.click();
+      await Util.sleep(300);
+    } catch (err) {
+      console.error('[YTM-Enhancer] Failed to remove track:', err);
+    }
+  },
+};
+
+const MessageBridge = {
+  // wire up message handlers for popup <-> content
+  register() {
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      try {
+        switch (msg.type) {
+          case 'SETTINGS_UPDATED':
+            location.reload();
+            return;
+
+          case 'GET_TRACKS': {
+            const tracks = PlaylistProcessor.extractTracks();
+            const titleEl = document.querySelector(Config.selectors.playlistTitle);
+            const stats   = window.__ytmeTagger?.getStats(State.allTracks.length ? State.allTracks : tracks)
+                          ?? { genreCounts: {}, untagged: tracks.length, total: tracks.length };
+            sendResponse({
+              tracks,
+              playlistTitle: titleEl?.innerText?.trim() || document.title || 'My Playlist',
+              stats,
+            });
+            return true;
+          }
+
+          case 'APPLY_FILTERS':
+            State.activeGenres = msg.genres || [];
+            sendResponse(InteractionHandler.applyFilters());
+            return true;
+
+          case 'GET_STATS':
+            sendResponse({ stats: window.__ytmeTagger?.getStats(State.allTracks) ?? null });
+            return true;
+
+          case 'NAVIGATED':
+            console.log('[YTM-Enhancer] NAVIGATED message received', msg.url);
+            Enhancer.softReset();
+            sendResponse({ success: true });
+            return true;
+        }
+      } catch (err) {
+        console.error('[YTM-Enhancer] Message handler error:', err);
+        sendResponse({ error: err.message });
+      }
+    });
+  },
+};
+
+const DOMObserver = {
+  _mutationObs:    null,
+  _deltaObs:       null,
+  _deltaInterval:  null,
+
+  // watch for SPA navigation
+  watchNavigation() {
+    if (this._mutationObs) this._mutationObs.disconnect();
+    if (!document.body) return; // Guard against null body
+
+    let debounceTimeout;
+    this._mutationObs = new MutationObserver(() => {
+      clearTimeout(debounceTimeout);
+      debounceTimeout = setTimeout(() => {
+        const href = window.location.href;
+        const isPlaylist = href.includes('music.youtube.com/playlist') ||
+                           href.includes('music.youtube.com/browse/VL');
+        if (isPlaylist) {
+          Enhancer.injectUI();
+        } else {
+          // not a playlist, remove UI
+          if (document.body && document.body.contains(host)) {
+            host.remove();
+          }
+          this._stopDelta();
+          Enhancer._injected = false;
+        }
+      }, 250);
+    });
+    this._mutationObs.observe(document.body, { childList: true, subtree: true });
+  },
+
+  _stopNavigation() {
+    this._mutationObs?.disconnect();
+    this._mutationObs = null;
+  },
+
+  // watch for new tracks after initial load (lazy loading)
+  startDelta(autoloadEnabled) {
+    const root = document.querySelector(Config.selectors.playlistShelf) || document.body;
+
+    if (this._deltaObs) this._deltaObs.disconnect();
+    this._deltaObs = new MutationObserver(() => {
+      console.log(`[YTM-Enhancer] DOM delta: ${PlaylistProcessor.getCurrentCount()} tracks`);
+    });
+    this._deltaObs.observe(root, { childList: true, subtree: true });
+
+    if (this._deltaInterval) clearInterval(this._deltaInterval);
+    this._deltaInterval = setInterval(async () => {
+      const expected = PlaylistProcessor.getExpectedCount();
+      const current  = PlaylistProcessor.getCurrentCount();
+      if (autoloadEnabled && expected && current < expected) {
+        await PlaylistProcessor.loadAll(autoloadEnabled);
+        State.allTracks = PlaylistProcessor.extractTracks();
+        UIManager.injectAllTrackUI(); // inject buttons on the fresh tracks
+        UIManager.refreshAllBadges();
+      }
+    }, 5000);
+  },
+
+  _stopDelta() {
+    this._deltaObs?.disconnect();
+    if (this._deltaInterval) clearInterval(this._deltaInterval);
+  },
+};
+
+const Enhancer = {
+  _injected: false,
+
+  init() {
+    MessageBridge.register();
+    
+    // poll for the search box, 100ms is fine
+    const fastCheck = setInterval(async () => {
+      const href = window.location.href;
+      const isPlaylist = href.includes('music.youtube.com/playlist') ||
+                         href.includes('music.youtube.com/browse/VL');
+      if (!isPlaylist) {
+        // not on a playlist anymore, clean up
+        if (document.body && document.body.contains(host)) {
+          host.remove();
+          this._injected = false;
+        }
+        return;
+      }
+      const searchBox = document.querySelector(Config.selectors.searchBox);
+      if (searchBox) {
+        clearInterval(fastCheck);
+        await this.injectUI();
+      }
+    }, 100);
+    
+    // keep watching for SPA nav
+    DOMObserver.watchNavigation();
+  },
+
+  /** Soft reset when SPA navigation detected by background script */
+  async softReset() {
+    State.allTracks = [];
+    State.dupGroups = [];
+    DOMObserver._stopDelta();
+    // console.log('softReset called from:', window.location.href);
+
+    // wipe stale tags so last playlist's data doesnt bleed in
+    window.__ytmeTagger?._clearStore?.();
+
+    if (document.body && document.body.contains(host)) host.remove();
+    this._injected = false;
+
+    // only re-inject if we're on a playlist
+    const href = window.location.href;
+    const isPlaylist = href.includes('music.youtube.com/playlist') ||
+                       href.includes('music.youtube.com/browse/VL');
+    if (!isPlaylist) return;
+
+    const waitForSearch = () => new Promise(resolve => {
+      const interval = setInterval(() => {
+        const searchBox = document.querySelector(Config.selectors.searchBox);
+        if (searchBox) {
+          clearInterval(interval);
+          resolve(searchBox);
+        }
+      }, 100);
+    });
+
+    await waitForSearch();
+    await this.injectUI();
+  },
+
+  async injectUI() {
+    // bail if not a playlist
+    const href = window.location.href;
+    const isPlaylist = href.includes('music.youtube.com/playlist') ||
+                       href.includes('music.youtube.com/browse/VL');
+    if (!isPlaylist) return;
+
+    const { searchEnabled, duplicatesEnabled, autoloadEnabled } = window.__ytme;
+    const searchBox = document.querySelector(Config.selectors.searchBox);
+    if (!searchBox || document.body.contains(host)) return;
+
+    try {
+      document.getElementById('tag-picker')?.remove();
+      document.getElementById('ytme-tag-picker-styles')?.remove();
+
+      UIManager.build(searchEnabled, duplicatesEnabled);
+      InteractionHandler.bindAll();
+      searchBox.parentNode.insertBefore(host, searchBox.nextSibling);
+    } catch (err) {
+      console.error('[YTM-Enhancer] Failed to inject UI:', err);
+      return;
+    }
+
+    return new Promise(resolve => {
+      setTimeout(async () => {
+        try {
+          if (window.__ytmeTagger) {
+            State.allTracks = PlaylistProcessor.extractTracks();
+            if (State.allTracks.length) {
+              const playlistId = new URLSearchParams(window.location.search).get('list');
+              await window.__ytmeTagger._fastInit(State.allTracks, playlistId);
+              UIManager.injectAllTrackUI();
+            }
+          }
+
+          await PlaylistProcessor.loadAll(autoloadEnabled);
+          DOMObserver.startDelta(autoloadEnabled);
+
+          if (window.__ytmeTagger) {
+            State.allTracks = PlaylistProcessor.extractTracks();
+            await window.__ytmeTagger.run(State.allTracks);
+            UIManager.injectAllTrackUI();
+          }
+        } catch (err) {
+          console.error('[YTM-Enhancer] Post-inject setup failed:', err);
+        }
+        resolve();
+      }, 1000);
+    });
+  },
+};
+}

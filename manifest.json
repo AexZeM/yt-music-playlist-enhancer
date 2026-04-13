@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "YT Music Playlist Enhancer",
+  "version": "1.0.0",
+  "permissions": [
+    "storage",
+    "downloads",
+    "scripting",
+    "activeTab",
+    "contextMenus",
+    "webNavigation",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://ws.audioscrobbler.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://music.youtube.com/*"
+      ],
+      "js": [
+        "fuse.basic.min.js",
+        "tagger.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YTM Enhancer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 320px;
+      background: #030407;
+      color: #e0e0e0;
+      font-family: 'DM Sans', sans-serif;
+      overflow-x: hidden;
+      user-select: none;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .page { display: none; flex-direction: column; animation: fade 0.2s ease; }
+    .page.active { display: flex; }
+    @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ── HEADER ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 16px 12px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
+    }
+    .header-left { display: flex; flex-direction: column; gap: 0px; }
+    .app-name { font-size: 14px; font-weight: 600; color: #fff; letter-spacing: 0.02em; }
+    .app-version { font-family: 'DM Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.2); letter-spacing: 0.1em; }
+    
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    .status-dot-wrap { display: flex; align-items: center; gap: 6px; }
+    .status-dot { width: 6px; height: 6px; border-radius: 0; background: #333; transition: all 0.3s; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); }
+    .status-dot.active { background: #00f0ff; box-shadow: 0 0 8px rgba(0,240,255,0.4); }
+    .status-label { font-family: 'DM Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.3); letter-spacing: 0.1em; }
+
+    .icon-btn, .back-btn {
+      background: transparent;
+      border: none;
+      color: rgba(255,255,255,0.4);
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.15s;
+    }
+    .icon-btn:hover, .back-btn:hover { color: #fff; transform: translateX(2px); }
+    .back-btn { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.1em; }
+    .back-btn:hover { transform: translateX(-2px); }
+
+    /* ── BANNER & STATES ── */
+    #playlist-banner {
+      display: none; flex-direction: column; gap: 4px; padding: 16px;
+      background: rgba(255,255,255,0.01);
+      border-left: 2px solid #00f0ff;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      margin: 0 16px;
+    }
+    #playlist-banner.visible { display: flex; }
+    .playlist-name { font-size: 13px; font-weight: 500; color: #fff; }
+    .playlist-meta { font-family: 'DM Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.3); letter-spacing: 0.05em; }
+
+    #not-playlist, #loading-state { display: none; flex-direction: column; align-items: center; justify-content: center; padding: 40px 16px; text-align: center; gap: 12px; }
+    #not-playlist.visible, #loading-state.visible { display: flex; }
+    .not-playlist-icon { font-size: 24px; opacity: 0.2; filter: grayscale(1); }
+    .not-playlist-text { font-family: 'DM Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.4); letter-spacing: 0.05em; }
+
+    .loading-ring { width: 24px; height: 24px; border: 1px solid rgba(255,255,255,0.05); border-top-color: #00f0ff; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    .loading-text { font-family: 'DM Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.3); letter-spacing: 0.1em; }
+
+    /* ── CONTENT & SECTIONS ── */
+    #main-content { display: none; }
+    #main-content.visible { display: block; }
+    .section, .settings-section { padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .section-title, .settings-section-title { font-family: 'DM Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.2); letter-spacing: 0.15em; margin-bottom: 12px; }
+
+    /* ── EXPORT BUTTONS (BORDERLESS & SHARP) ── */
+    .export-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .export-btn {
+      display: flex; flex-direction: column; gap: 4px; padding: 12px 10px;
+      background: rgba(255,255,255,0.02);
+      border: none;
+      clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
+      cursor: pointer; text-align: left; transition: all 0.2s;
+    }
+    .export-btn:hover { background: rgba(255,255,255,0.05); }
+    .export-btn:active { transform: scale(0.95); }
+    .export-btn-icon { font-size: 14px; opacity: 0.8; }
+    .export-btn-label { font-family: 'DM Mono', monospace; font-size: 10px; color: #fff; }
+    .export-btn-desc { font-size: 9px; color: rgba(255,255,255,0.3); }
+
+    /* ── PILLS (TECH STYLE) ── */
+    .pill-group { display: flex; flex-wrap: wrap; gap: 6px; }
+    .filter-pill {
+      font-family: 'DM Mono', monospace; font-size: 9px; padding: 4px 10px;
+      background: transparent; color: rgba(255,255,255,0.3);
+      border: 1px solid rgba(255,255,255,0.05);
+      clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
+      cursor: pointer; transition: all 0.2s; letter-spacing: 0.05em;
+    }
+    .filter-pill:hover { background: rgba(255,255,255,0.05); color: #fff; border-color: transparent; }
+    .filter-pill.active-genre { background: rgba(0,240,255,0.1); color: #00f0ff; border-color: transparent; }
+    .filter-pill.active-warn { background: rgba(245,158,11,0.1); color: #fbbf24; border-color: transparent; }
+
+    /* ── TOGGLES ── */
+    .toggle-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 10px 0; gap: 12px; }
+    .toggle-row-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+    .toggle-row-label { font-size: 12px; color: rgba(255,255,255,0.8); }
+    .toggle-row-desc { font-size: 10px; color: rgba(255,255,255,0.3); }
+    .toggle-row-warn { font-family: 'DM Mono', monospace; font-size: 8px; color: #ef4444; margin-top: 4px; letter-spacing: 0.05em; }
+
+    .toggle { position: relative; width: 28px; height: 14px; cursor: pointer; flex-shrink: 0; margin-top: 2px; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track { position: absolute; inset: 0; background: rgba(255,255,255,0.1); clip-path: polygon(2px 0, 100% 0, calc(100% - 2px) 100%, 0 100%); transition: background 0.2s; }
+    .toggle input:checked + .toggle-track { background: #00f0ff; }
+    .toggle-knob { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; background: #fff; transition: all 0.2s; clip-path: polygon(0 0, 100% 0, 80% 100%, 0 100%); }
+    .toggle input:checked ~ .toggle-knob { left: 16px; clip-path: polygon(20% 0, 100% 0, 100% 100%, 0 100%); background: #030407; }
+
+    /* ── CACHE STATS ── */
+    .cache-stats { display: flex; gap: 2px; margin-bottom: 12px; }
+    .cache-stat { flex: 1; background: rgba(255,255,255,0.02); padding: 10px; display: flex; flex-direction: column; gap: 2px; }
+    .cache-stat-value { font-family: 'DM Mono', monospace; font-size: 12px; color: #fff; }
+    .cache-stat-label { font-family: 'DM Mono', monospace; font-size: 8px; color: rgba(255,255,255,0.3); }
+
+    .danger-btn {
+      width: 100%; padding: 10px; background: rgba(239,68,68,0.05); color: #ef4444;
+      border: none; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.1em;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .danger-btn:hover { background: rgba(239,68,68,0.15); }
+
+    /* ── FOOTER & TOAST ── */
+    .footer { padding: 16px; display: flex; align-items: center; justify-content: space-between; margin-top: auto; border-top: 1px solid rgba(255,255,255,0.05); }
+    .footer-link { font-family: 'DM Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.2); background: none; border: none; cursor: pointer; letter-spacing: 0.1em; transition: color 0.2s; }
+    .footer-link:hover { color: #fff; }
+
+    #toast {
+      position: fixed; bottom: 0; left: 0; right: 0; padding: 12px 16px;
+      background: #00f0ff; color: #030407; font-family: 'DM Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
+      transform: translateY(100%); transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); z-index: 999; text-align: center;
+    }
+    #toast.visible { transform: translateY(0); }
+    #toast.error { background: #ef4444; color: #fff; }
+
+    .signature {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      color:rgba(238, 238, 238, 0.96);
+      letter-spacing: 0.17em;
+      user-select: none;
+      pointer-events: none;
+    }
+
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <div class="page active" id="page-main">
+    <div class="header">
+      <div class="header-left">
+        <span class="app-name">YTM Playlist Enhancer</span>
+        <span class="app-version">v1.0.0</span>
+      </div>
+      <div class="header-right">
+        <div class="status-dot-wrap">
+          <div class="status-dot" id="status-dot"></div>
+          <span class="status-label" id="status-label">SYS.CHK</span>
+        </div>
+        <button class="icon-btn" id="btn-settings" title="Settings">⚙</button>
+      </div>
+    </div>
+
+    <div id="loading-state">
+      <div class="loading-ring"></div>
+      <span class="loading-text">SYNCING DATA</span>
+    </div>
+
+    <div id="not-playlist">
+      <span class="not-playlist-icon">⚡</span>
+      <span class="not-playlist-text" id="not-playlist-text">AWAITING PLAYLIST<br>CONNECTION</span>
+    </div>
+
+    <div id="main-content">
+      <div id="playlist-banner">
+        <span class="playlist-name" id="playlist-name">—</span>
+        <span class="playlist-meta" id="playlist-meta">— tracks</span>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Data Extraction</div>
+        <div class="export-grid">
+          <button class="export-btn json" id="export-json">
+            <span class="export-btn-label">JSON</span>
+            <span class="export-btn-desc">Raw Meta</span>
+          </button>
+          <button class="export-btn csv" id="export-csv">
+            <span class="export-btn-label">CSV</span>
+            <span class="export-btn-desc">Spreadsheet</span>
+          </button>
+          <button class="export-btn md" id="export-md">
+            <span class="export-btn-label">MD</span>
+            <span class="export-btn-desc">Markdown</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <button class="footer-link" id="btn-refresh">Re-Sync</button>
+      <span class="signature">Made By AexZeM ✨</span>
+    </div>
+  </div>
+
+  <div class="page" id="page-settings">
+    <div class="header">
+      <div class="header-left">
+        <button class="back-btn" id="btn-back">← Back</button>
+      </div>
+      <div class="header-left">
+        <span class="app-name">Config</span>
+      </div>
+      <div style="width:40px;"></div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Active Filters</div>
+      <div class="pill-group" id="genre-pills"></div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Modules</div>
+      <div class="toggle-row">
+        <div class="toggle-row-info">
+          <span class="toggle-row-label">Inline Search</span>
+          <span class="toggle-row-desc">Enable-Disable the search bar UI</span>
+        </div>
+        <label class="toggle"><input type="checkbox" id="toggle-search" checked /><div class="toggle-track"></div><div class="toggle-knob"></div></label>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-row-info">
+          <span class="toggle-row-label">Duplicate Scanner</span>
+          <span class="toggle-row-desc">Enable-Disable the duplicate detection UI</span>
+        </div>
+        <label class="toggle"><input type="checkbox" id="toggle-duplicates" checked /><div class="toggle-track"></div><div class="toggle-knob"></div></label>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-row-info">
+          <span class="toggle-row-label">Force Autoload</span>
+          <span class="toggle-row-desc">Lazy-load override</span>
+          <span class="toggle-row-warn">Disabling this option would lead loading problems for extension!</span>
+        </div>
+        <label class="toggle"><input type="checkbox" id="toggle-autoload" checked /><div class="toggle-track"></div><div class="toggle-knob"></div></label>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Memory Allocation</div>
+      <div class="cache-stats">
+        <div class="cache-stat"><span class="cache-stat-value" id="cache-artists">0</span><span class="cache-stat-label">ARTISTS</span></div>
+        <div class="cache-stat"><span class="cache-stat-value" id="cache-genres">0</span><span class="cache-stat-label">GENRES</span></div>
+        <div class="cache-stat"><span class="cache-stat-value" id="cache-size">0 KB</span><span class="cache-stat-label">PAYLOAD</span></div>
+      </div>
+      <button class="danger-btn" id="btn-clear-cache">Purge Cache</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
