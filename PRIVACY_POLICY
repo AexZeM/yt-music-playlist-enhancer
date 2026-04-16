@@ -1,0 +1,14 @@
+# Privacy Policy for YT Music Playlist Enhancer
+
+**Last updated:** April 16, 2026
+
+YT Music Playlist Enhancer ("the Extension") is an open-source tool committed to protecting your privacy. This Privacy Policy explains how the Extension handles your data.
+
+**Data Collection and Usage:**
+The Extension operates locally on your browser. It reads website content exclusively on YouTube Music (music.youtube.com) to provide features like tagging, searching, and duplicate finding. It uses the public Last.fm API solely to fetch music metadata (genres/tags).
+
+**Personal Data:**
+The Extension does NOT collect, store, share, monitor, or transmit any personal identifiable information or analytics. All playlist data, exports, and preferences are processed and stored strictly locally in your browser's storage.
+
+**Contact:**
+If you have any questions or concerns, please open an issue on our GitHub repository.
