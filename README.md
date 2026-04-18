@@ -26,5 +26,6 @@ I hope it helps others who are experiencing the same frustrations with YTM.
 3.  Enable **Developer Mode** (toggle in the top right)
 4.  Click **Load unpacked** and select the extracted folder
 
----
-> **TODO:** I will be uploading this to the Chrome Web Store in the near future.
+### Add from Extension Store
+You can simply add to your browser!
+https://chromewebstore.google.com/detail/yt-music-playlist-enhance/aigenoggiahlkplokpmlhojfndombagg
