@@ -9,10 +9,19 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    /* ── THEMES ── */
+    :root {
+      --bg-color:      #030407;
+      --accent-color:  #00f0ff;
+      --text-primary:  #e0e0e0;
+      --text-secondary: color-mix(in srgb, var(--text-primary) 60%, transparent);
+      --border-color:   color-mix(in srgb, var(--text-primary) 15%, transparent);
+    }
+
     body {
       width: 320px;
-      background: #030407;
-      color: #e0e0e0;
+      background: var(--bg-color);
+      color: var(--text-primary);
       font-family: 'DM Sans', sans-serif;
       overflow-x: hidden;
       user-select: none;
@@ -30,103 +39,103 @@
       align-items: center;
       justify-content: space-between;
       padding: 16px 16px 12px;
-      background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
+      background: linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 3%, transparent) 0%, transparent 100%);
     }
     .header-left { display: flex; flex-direction: column; gap: 0px; }
-    .app-name { font-size: 14px; font-weight: 600; color: #fff; letter-spacing: 0.02em; }
-    .app-version { font-family: 'DM Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.2); letter-spacing: 0.1em; }
+    .app-name { font-size: 14px; font-weight: 600; color: var(--text-primary); letter-spacing: 0.02em; }
+    .app-version { font-family: 'DM Mono', monospace; font-size: 9px; color: color-mix(in srgb, var(--text-primary) 20%, transparent); letter-spacing: 0.1em; }
     
     .header-right { display: flex; align-items: center; gap: 12px; }
     .status-dot-wrap { display: flex; align-items: center; gap: 6px; }
     .status-dot { width: 6px; height: 6px; border-radius: 0; background: #333; transition: all 0.3s; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); }
-    .status-dot.active { background: #00f0ff; box-shadow: 0 0 8px rgba(0,240,255,0.4); }
-    .status-label { font-family: 'DM Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.3); letter-spacing: 0.1em; }
+    .status-dot.active { background: var(--accent-color); box-shadow: 0 0 8px color-mix(in srgb, var(--accent-color) 40%, transparent); }
+    .status-label { font-family: 'DM Mono', monospace; font-size: 9px; color: color-mix(in srgb, var(--text-primary) 30%, transparent); letter-spacing: 0.1em; }
 
     .icon-btn, .back-btn {
       background: transparent;
       border: none;
-      color: rgba(255,255,255,0.4);
+      color: color-mix(in srgb, var(--text-primary) 40%, transparent);
       cursor: pointer;
       font-size: 14px;
       transition: all 0.15s;
     }
-    .icon-btn:hover, .back-btn:hover { color: #fff; transform: translateX(2px); }
+    .icon-btn:hover, .back-btn:hover { color: var(--text-primary); transform: translateX(2px); }
     .back-btn { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.1em; }
     .back-btn:hover { transform: translateX(-2px); }
 
     /* ── BANNER & STATES ── */
     #playlist-banner {
       display: none; flex-direction: column; gap: 4px; padding: 16px;
-      background: rgba(255,255,255,0.01);
-      border-left: 2px solid #00f0ff;
-      border-bottom: 1px solid rgba(255,255,255,0.05);
+      background: color-mix(in srgb, var(--text-primary) 1%, transparent);
+      border-left: 2px solid var(--accent-color);
+      border-bottom: 1px solid var(--border-color);
       margin: 0 16px;
     }
     #playlist-banner.visible { display: flex; }
-    .playlist-name { font-size: 13px; font-weight: 500; color: #fff; }
-    .playlist-meta { font-family: 'DM Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.3); letter-spacing: 0.05em; }
+    .playlist-name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+    .playlist-meta { font-family: 'DM Mono', monospace; font-size: 9px; color: color-mix(in srgb, var(--text-primary) 30%, transparent); letter-spacing: 0.05em; }
 
     #not-playlist, #loading-state { display: none; flex-direction: column; align-items: center; justify-content: center; padding: 40px 16px; text-align: center; gap: 12px; }
     #not-playlist.visible, #loading-state.visible { display: flex; }
     .not-playlist-icon { font-size: 24px; opacity: 0.2; filter: grayscale(1); }
-    .not-playlist-text { font-family: 'DM Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.4); letter-spacing: 0.05em; }
+    .not-playlist-text { font-family: 'DM Mono', monospace; font-size: 10px; color: color-mix(in srgb, var(--text-primary) 40%, transparent); letter-spacing: 0.05em; }
 
-    .loading-ring { width: 24px; height: 24px; border: 1px solid rgba(255,255,255,0.05); border-top-color: #00f0ff; border-radius: 50%; animation: spin 0.6s linear infinite; }
-    .loading-text { font-family: 'DM Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.3); letter-spacing: 0.1em; }
+    .loading-ring { width: 24px; height: 24px; border: 1px solid var(--border-color); border-top-color: var(--accent-color); border-radius: 50%; animation: spin 0.6s linear infinite; }
+    .loading-text { font-family: 'DM Mono', monospace; font-size: 10px; color: color-mix(in srgb, var(--text-primary) 30%, transparent); letter-spacing: 0.1em; }
 
     /* ── CONTENT & SECTIONS ── */
     #main-content { display: none; }
     #main-content.visible { display: block; }
-    .section, .settings-section { padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-    .section-title, .settings-section-title { font-family: 'DM Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.2); letter-spacing: 0.15em; margin-bottom: 12px; }
+    .section, .settings-section { padding: 16px; border-bottom: 1px solid var(--border-color); }
+    .section-title, .settings-section-title { font-family: 'DM Mono', monospace; font-size: 9px; color: color-mix(in srgb, var(--text-primary) 20%, transparent); letter-spacing: 0.15em; margin-bottom: 12px; }
 
     /* ── EXPORT BUTTONS (BORDERLESS & SHARP) ── */
     .export-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
     .export-btn {
       display: flex; flex-direction: column; gap: 4px; padding: 12px 10px;
-      background: rgba(255,255,255,0.02);
+      background: color-mix(in srgb, var(--text-primary) 2%, transparent);
       border: none;
       clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
       cursor: pointer; text-align: left; transition: all 0.2s;
     }
-    .export-btn:hover { background: rgba(255,255,255,0.05); }
+    .export-btn:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
     .export-btn:active { transform: scale(0.95); }
     .export-btn-icon { font-size: 14px; opacity: 0.8; }
-    .export-btn-label { font-family: 'DM Mono', monospace; font-size: 10px; color: #fff; }
-    .export-btn-desc { font-size: 9px; color: rgba(255,255,255,0.3); }
+    .export-btn-label { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--text-primary); }
+    .export-btn-desc { font-size: 9px; color: color-mix(in srgb, var(--text-primary) 30%, transparent); }
 
     /* ── PILLS (TECH STYLE) ── */
     .pill-group { display: flex; flex-wrap: wrap; gap: 6px; }
     .filter-pill {
       font-family: 'DM Mono', monospace; font-size: 9px; padding: 4px 10px;
-      background: transparent; color: rgba(255,255,255,0.3);
-      border: 1px solid rgba(255,255,255,0.05);
+      background: transparent; color: color-mix(in srgb, var(--text-primary) 30%, transparent);
+      border: 1px solid var(--border-color);
       clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
       cursor: pointer; transition: all 0.2s; letter-spacing: 0.05em;
     }
-    .filter-pill:hover { background: rgba(255,255,255,0.05); color: #fff; border-color: transparent; }
-    .filter-pill.active-genre { background: rgba(0,240,255,0.1); color: #00f0ff; border-color: transparent; }
+    .filter-pill:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: var(--text-primary); border-color: transparent; }
+    .filter-pill.active-genre { background: color-mix(in srgb, var(--accent-color) 15%, transparent); color: var(--accent-color); border-color: transparent; }
     .filter-pill.active-warn { background: rgba(245,158,11,0.1); color: #fbbf24; border-color: transparent; }
 
     /* ── TOGGLES ── */
     .toggle-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 10px 0; gap: 12px; }
     .toggle-row-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-    .toggle-row-label { font-size: 12px; color: rgba(255,255,255,0.8); }
-    .toggle-row-desc { font-size: 10px; color: rgba(255,255,255,0.3); }
+    .toggle-row-label { font-size: 12px; color: var(--text-primary); }
+    .toggle-row-desc { font-size: 10px; color: var(--text-secondary); }
     .toggle-row-warn { font-family: 'DM Mono', monospace; font-size: 8px; color: #ef4444; margin-top: 4px; letter-spacing: 0.05em; }
 
     .toggle { position: relative; width: 28px; height: 14px; cursor: pointer; flex-shrink: 0; margin-top: 2px; }
     .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-    .toggle-track { position: absolute; inset: 0; background: rgba(255,255,255,0.1); clip-path: polygon(2px 0, 100% 0, calc(100% - 2px) 100%, 0 100%); transition: background 0.2s; }
-    .toggle input:checked + .toggle-track { background: #00f0ff; }
-    .toggle-knob { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; background: #fff; transition: all 0.2s; clip-path: polygon(0 0, 100% 0, 80% 100%, 0 100%); }
-    .toggle input:checked ~ .toggle-knob { left: 16px; clip-path: polygon(20% 0, 100% 0, 100% 100%, 0 100%); background: #030407; }
+    .toggle-track { position: absolute; inset: 0; background: color-mix(in srgb, var(--text-primary) 10%, transparent); clip-path: polygon(2px 0, 100% 0, calc(100% - 2px) 100%, 0 100%); transition: background 0.2s; }
+    .toggle input:checked + .toggle-track { background: var(--accent-color); }
+    .toggle-knob { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; background: var(--text-primary); transition: all 0.2s; clip-path: polygon(0 0, 100% 0, 80% 100%, 0 100%); }
+    .toggle input:checked ~ .toggle-knob { left: 16px; clip-path: polygon(20% 0, 100% 0, 100% 100%, 0 100%); background: var(--bg-color); }
 
     /* ── CACHE STATS ── */
     .cache-stats { display: flex; gap: 2px; margin-bottom: 12px; }
-    .cache-stat { flex: 1; background: rgba(255,255,255,0.02); padding: 10px; display: flex; flex-direction: column; gap: 2px; }
-    .cache-stat-value { font-family: 'DM Mono', monospace; font-size: 12px; color: #fff; }
-    .cache-stat-label { font-family: 'DM Mono', monospace; font-size: 8px; color: rgba(255,255,255,0.3); }
+    .cache-stat { flex: 1; background: color-mix(in srgb, var(--text-primary) 2%, transparent); padding: 10px; display: flex; flex-direction: column; gap: 2px; }
+    .cache-stat-value { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text-primary); }
+    .cache-stat-label { font-family: 'DM Mono', monospace; font-size: 8px; color: var(--text-secondary); }
 
     .danger-btn {
       width: 100%; padding: 10px; background: rgba(239,68,68,0.05); color: #ef4444;
@@ -136,29 +145,140 @@
     .danger-btn:hover { background: rgba(239,68,68,0.15); }
 
     /* ── FOOTER & TOAST ── */
-    .footer { padding: 16px; display: flex; align-items: center; justify-content: space-between; margin-top: auto; border-top: 1px solid rgba(255,255,255,0.05); }
-    .footer-link { font-family: 'DM Mono', monospace; font-size: 9px; color: rgba(255,255,255,0.2); background: none; border: none; cursor: pointer; letter-spacing: 0.1em; transition: color 0.2s; }
-    .footer-link:hover { color: #fff; }
+    .footer { padding: 16px; display: flex; align-items: center; justify-content: space-between; margin-top: auto; border-top: 1px solid var(--border-color); }
+    .footer-link { font-family: 'DM Mono', monospace; font-size: 9px; color: color-mix(in srgb, var(--text-primary) 20%, transparent); background: none; border: none; cursor: pointer; letter-spacing: 0.1em; transition: color 0.2s; }
+    .footer-link:hover { color: var(--text-primary); }
 
     #toast {
       position: fixed; bottom: 0; left: 0; right: 0; padding: 12px 16px;
-      background: #00f0ff; color: #030407; font-family: 'DM Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
+      background: var(--accent-color); color: var(--bg-color); font-family: 'DM Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
       transform: translateY(100%); transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); z-index: 999; text-align: center;
     }
     #toast.visible { transform: translateY(0); }
     #toast.error { background: #ef4444; color: #fff; }
 
-    .signature {
-      font-family: 'DM Mono', monospace;
-      font-size: 9px;
-      color:rgba(238, 238, 238, 0.96);
-      letter-spacing: 0.17em;
-      user-select: none;
+    body {
+      background: var(--bg-color);
+      color: var(--text-primary);
+    }
+
+    .status-dot.active     { background: var(--accent-color); box-shadow: 0 0 8px color-mix(in srgb, var(--accent-color) 40%, transparent); }
+    .toggle input:checked + .toggle-track { background: var(--accent-color); }
+    .filter-pill.active-genre { background: color-mix(in srgb, var(--accent-color) 15%, transparent); color: var(--accent-color); }
+    #playlist-banner { border-left-color: var(--accent-color); }
+    .loading-ring    { border-top-color: var(--accent-color); }
+    #toast           { background: var(--accent-color); }
+    .toggle input:checked ~ .toggle-knob { background: var(--bg-color); }
+
+    .export-btn {
+      position: relative;
+    }
+    .export-btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      clip-path: polygon(
+        0 0, calc(100% - 6px) 0, 100% 6px, 100% 7px,
+        calc(100% - 6px) 1px, 1px 1px, 1px calc(100% - 6px),
+        0 calc(100% - 6px)
+      );
+      background: var(--accent-color);
+      opacity: 0.5;
       pointer-events: none;
     }
 
+    .theme-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
 
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .theme-swatch {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      padding: 8px 6px;
+      background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+      border: 1px solid var(--border-color);
+      clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .theme-swatch:hover  { border-color: color-mix(in srgb, var(--text-primary) 15%, transparent); }
+    .theme-swatch.active { border-color: var(--accent-color); background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+
+    .theme-preview {
+      width: 28px;
+      height: 18px;
+      border-radius: 2px;
+      position: relative;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .theme-preview-bg     { position: absolute; inset: 0; }
+    .theme-preview-accent { position: absolute; right: 0; bottom: 0; width: 10px; height: 10px; }
+
+    .theme-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 7px;
+      color: color-mix(in srgb, var(--text-primary) 40%, transparent);
+      letter-spacing: 0.05em;
+      text-align: center;
+      line-height: 1.2;
+      word-break: break-all;
+    }
+    .theme-swatch.active .theme-label { color: var(--accent-color); }
+
+    /* ── LIGHT THEME ── */
+    body.light-theme {
+      background: var(--bg-color);
+      color: var(--text-primary);
+    }
+
+    body.light-theme .header {
+      background: color-mix(in srgb, var(--bg-color) 95%, #000);
+    }
+
+    body.light-theme .section, body.light-theme .settings-section {
+      background: color-mix(in srgb, var(--bg-color) 90%, #000);
+      border-bottom-color: color-mix(in srgb, var(--accent-color) 15%, transparent);
+    }
+
+    body.light-theme input {
+      background: color-mix(in srgb, #000 10%, var(--bg-color));
+      color: var(--text-primary);
+      border-color: color-mix(in srgb, var(--accent-color) 30%, transparent);
+    }
+
+    body.light-theme .toggle-track {
+      background: color-mix(in srgb, var(--accent-color) 20%, transparent);
+    }
+
+    body.light-theme .filter-pill {
+      background: transparent;
+      color: var(--text-primary);
+      border-color: var(--border-color);
+    }
+
+    body.light-theme .filter-pill:hover {
+      background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+      color: var(--text-primary);
+      border-color: transparent;
+    }
+
+    body.light-theme .export-btn {
+      background: color-mix(in srgb, #000 5%, var(--bg-color));
+      color: var(--text-primary);
+    }
+
+    body.light-theme .export-btn:hover {
+      background: color-mix(in srgb, #000 12%, var(--bg-color));
+    }
+
+    body.light-theme #toast {
+      color: #fff;
+    }
   </style>
 </head>
 <body>
@@ -167,7 +287,7 @@
     <div class="header">
       <div class="header-left">
         <span class="app-name">YTM Playlist Enhancer</span>
-        <span class="app-version">v1.0.0</span>
+        <span class="app-version">v1.1.0</span>
       </div>
       <div class="header-right">
         <div class="status-dot-wrap">
@@ -259,6 +379,11 @@
         </div>
         <label class="toggle"><input type="checkbox" id="toggle-autoload" checked /><div class="toggle-track"></div><div class="toggle-knob"></div></label>
       </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-section-title">Themes</div>
+      <div class="theme-grid" id="theme-grid"></div>
     </div>
 
     <div class="settings-section">

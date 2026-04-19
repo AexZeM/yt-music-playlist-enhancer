@@ -532,13 +532,13 @@ window.__ytmeTagger = {
   // returns tag picker HTML, goes outside shadow DOM
   getTagPickerHTML() {
     return `
-<div id="tag-picker" style="display:none;position:fixed;background:rgba(5,7,10,0.95);backdrop-filter:blur(40px);border:1px solid rgba(0,240,255,0.3);border-radius:16px;width:360px;padding:20px;z-index:2147483647;box-shadow:0 40px 100px rgba(0,0,0,1);">
-  <div id="tag-picker-title" style="font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;color:#fff;margin-bottom:8px;letter-spacing:0.02em;">Manual Tag</div>
-  <div id="tag-picker-artist" style="font-family:'DM Mono',monospace;font-size:9px;color:rgba(255,255,255,0.4);margin-bottom:16px;letter-spacing:0.05em;"></div>
+<div id="tag-picker" style="display:none;position:fixed;background:color-mix(in srgb, var(--ytme-bg) 95%, transparent);backdrop-filter:blur(40px);border:1px solid var(--ytme-border);border-radius:16px;width:360px;padding:20px;z-index:2147483647;box-shadow:0 40px 100px rgba(0,0,0,1);">
+  <div id="tag-picker-title" style="font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;color:var(--ytme-text);margin-bottom:8px;letter-spacing:0.02em;">Manual Tag</div>
+  <div id="tag-picker-artist" style="font-family:'DM Mono',monospace;font-size:9px;color:color-mix(in srgb, var(--ytme-text) 40%, transparent);margin-bottom:16px;letter-spacing:0.05em;"></div>
   <div class="tag-picker-pills" id="tag-picker-pills" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;"></div>
   <div class="tag-picker-actions" style="display:flex;gap:8px;justify-content:flex-end;">
-    <button class="tb-btn" id="tag-picker-cancel" style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;padding:8px 16px;cursor:pointer;border:none;background:rgba(255,255,255,0.03);color:rgba(255,255,255,0.5);transition:all .2s;border-radius:8px;">Cancel</button>
-    <button class="tb-btn" id="tag-picker-save" style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;padding:8px 16px;cursor:pointer;border:none;background:rgba(255,255,255,0.03);color:#00f0ff;transition:all .2s;border-radius:8px;">Continue</button>
+    <button class="tb-btn" id="tag-picker-cancel" style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;padding:8px 16px;cursor:pointer;border:none;background:color-mix(in srgb, var(--ytme-text) 3%, transparent);color:color-mix(in srgb, var(--ytme-text) 50%, transparent);transition:all .2s;border-radius:8px;">Cancel</button>
+    <button class="tb-btn" id="tag-picker-save" style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;padding:8px 16px;cursor:pointer;border:none;background:color-mix(in srgb, var(--ytme-text) 3%, transparent);color:var(--ytme-accent);transition:all .2s;border-radius:8px;">Continue</button>
   </div>
 </div>`;
   },
@@ -546,11 +546,11 @@ window.__ytmeTagger = {
   // tag picker CSS -- global cus it's outside shadow DOM
   getTagPickerCSS() {
     return `
-.tag-pill{font-family:'DM Mono',monospace;font-size:9px;padding:4px 10px;background:transparent;border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);cursor:pointer;transition:all .2s;}
-.tag-pill:hover{border-color:rgba(255,255,255,0.3);color:#fff;}
-.tag-pill.selected{background:rgba(0,240,255,0.1);border-color:#00f0ff;color:#00f0ff;}
-.tb-btn{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;padding:8px 16px;cursor:pointer;border:none;background:rgba(255,255,255,0.03);color:rgba(255,255,255,0.5);transition:all .2s;border-radius:8px;}
-.tb-btn:hover{background:rgba(255,255,255,0.08);color:#fff;}
+.tag-pill{font-family:'DM Mono',monospace;font-size:9px;padding:4px 10px;background:transparent;border:1px solid var(--ytme-border);color:color-mix(in srgb, var(--ytme-text) 50%, transparent);cursor:pointer;transition:all .2s;}
+.tag-pill:hover{border-color:var(--ytme-text);color:var(--ytme-text);}
+.tag-pill.selected{background:color-mix(in srgb, var(--ytme-accent) 10%, transparent);border-color:var(--ytme-accent);color:var(--ytme-accent);}
+.tb-btn{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;padding:8px 16px;cursor:pointer;border:none;background:color-mix(in srgb, var(--ytme-text) 3%, transparent);color:color-mix(in srgb, var(--ytme-text) 50%, transparent);transition:all .2s;border-radius:8px;}
+.tb-btn:hover{background:color-mix(in srgb, var(--ytme-text) 8%, transparent);color:var(--ytme-text);}
 .tb-btn-danger{background:rgba(239,68,68,0.05);color:#ef4444;}
 .tb-btn-danger:hover{background:rgba(239,68,68,0.15);}
 `;

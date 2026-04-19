@@ -394,6 +394,70 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
+const THEMES = [
+  { id: 'default',        label: 'Default',   bg: '#030407', accent: '#00f0ff', text: null },
+  { id: 'twilight-patch', label: 'Twilight',   bg: '#16042a', accent: '#e1dd6a', text: null },
+  { id: 'deep-ocean',     label: 'Deep Ocean', bg: '#0F172A', accent: '#F97316', text: null },
+  { id: 'snowy',          label: 'Snowy',      bg: '#f5f5f5f9', accent: '#C85A00', text: '#1F2937' },
+  { id: 'ice',            label: 'Ice',        bg: '#d9eef8', accent: '#6B21A8', text: '#1F2937' },
+  { id: 'matcha',         label: 'Matcha',     bg: '#ebe5df', accent: '#15803D', text: '#1F2937' }, 
+];
+
+function applyTheme(themeId) {
+  const theme = THEMES.find(t => t.id === themeId) || THEMES[0];
+  const root  = document.documentElement;
+  root.style.setProperty('--bg-color',     theme.bg);
+  root.style.setProperty('--accent-color', theme.accent);
+  root.style.setProperty('--text-primary', theme.text || '#e0e0e0');
+
+  const isLight = ['snowy', 'ice', 'matcha'].includes(themeId);
+  document.body.classList.toggle('light-theme', isLight);
+
+  document.querySelectorAll('.theme-swatch').forEach(el => {
+    el.classList.toggle('active', el.dataset.themeId === theme.id);
+  });
+}
+
+function saveTheme(themeId) {
+  chrome.storage.local.set({ ytme_theme: themeId });
+  notifyContentScript({ type: 'THEME', themeId });
+}
+
+function loadTheme() {
+  chrome.storage.local.get('ytme_theme', (data) => {
+    applyTheme(data.ytme_theme || 'default');
+  });
+}
+
+function renderThemeGrid() {
+  const grid = document.getElementById('theme-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  THEMES.forEach(theme => {
+    const swatch = document.createElement('button');
+    swatch.className       = 'theme-swatch';
+    swatch.dataset.themeId = theme.id;
+    swatch.title           = theme.label;
+
+    swatch.innerHTML = `
+      <div class="theme-preview">
+        <div class="theme-preview-bg"     style="background:${theme.bg};"></div>
+        <div class="theme-preview-accent" style="background:${theme.accent};"></div>
+      </div>
+      <span class="theme-label">${theme.label}</span>
+    `;
+
+    swatch.addEventListener('click', () => {
+      applyTheme(theme.id);
+      saveTheme(theme.id);
+      showToast(`Theme: ${theme.label}`, 'info');
+    });
+
+    grid.appendChild(swatch);
+  });
+}
+
 async function init() {
   showLoading();
 
@@ -401,6 +465,9 @@ async function init() {
   await loadSettings();
   renderGenrePills(null);
   bindAllToggles();
+
+  renderThemeGrid();
+  loadTheme();
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 

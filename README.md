@@ -1,6 +1,6 @@
 # 🎵 YT Music Playlist Enhancer
 
-[![Version](https://img.shields.io/badge/version-1.0.1-00f0ff.svg?style=flat-square)](https://github.com/AexZeM/yt-music-playlist-enhancer)
+[![Version](https://img.shields.io/badge/version-1.1.0-00f0ff.svg?style=flat-square)](https://github.com/AexZeM/yt-music-playlist-enhancer)
 [![Platform](https://img.shields.io/badge/platform-Chrome-red.svg?style=flat-square)](https://music.youtube.com )
 [![License](https://img.shields.io/badge/license-MIT-lightgrey.svg?style=flat-square)](LICENSE)
 
@@ -27,4 +27,7 @@ I hope it helps others who are experiencing the same frustrations with YTM.
 4.  Click **Load unpacked** and select the extracted folder
 
 ---
-> **TODO:** I will be uploading this to the Chrome Web Store in the near future.
+### Add from Extension Store
+You can simply add to your browser!
+https://chromewebstore.google.com/detail/yt-music-playlist-enhance/aigenoggiahlkplokpmlhojfndombagg
+
