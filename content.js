@@ -349,7 +349,22 @@ const UIManager = {
 
   injectTrackUI(track) {
     const el = track?.element;
-    if (!el || el.dataset.ytmeTagged) return;
+    if (!el) return;
+    const existingTagUI = el.querySelector('.ytme-genre-badge');
+    const existingTagBtn = el.querySelector('button[title="Tag this track"]');
+
+    if (el.dataset.ytmeTagged === '1' && existingTagUI && existingTagBtn) {
+        return;
+    }
+
+
+    if (existingTagUI) {
+        existingTagUI.remove();
+    }
+    if (existingTagBtn) {
+        existingTagBtn.remove();
+    }
+
     el.dataset.ytmeTagged = '1';
 
     const fixedColumns = el.querySelector('.fixed-columns');
@@ -374,7 +389,7 @@ const UIManager = {
       display: none;
       letter-spacing: 0.03em;
     `;
-    UIManager._updateGenreBadge(genreBadge, track.idx);
+    UIManager._updateGenreBadge(genreBadge, track);
 
     const tagBtn = document.createElement('button');
     tagBtn.title = 'Tag this track';
@@ -414,8 +429,9 @@ const UIManager = {
     });
   },
 
-_updateGenreBadge(badgeEl, trackIdx) {
-    const tags = window.__ytmeTagger?.getTags(trackIdx);
+_updateGenreBadge(badgeEl, track) {
+    if (!badgeEl || !track) return;
+    const tags = window.__ytmeTagger?.getTags(track);
     if (tags?.genres?.length) {
       const [first, ...rest] = tags.genres;
       badgeEl.textContent = rest.length ? `${first} +${rest.length}` : first;
@@ -431,10 +447,8 @@ _updateGenreBadge(badgeEl, trackIdx) {
     freshTracks.forEach(track => {
       const el = track.element;
       if (!el) return;
-      // update badge-id to current index just in case
-      el.dataset.ytmeBadgeId = track.idx;
       const badge = el.querySelector('.ytme-genre-badge');
-      if (badge) this._updateGenreBadge(badge, track.idx);
+      if (badge) this._updateGenreBadge(badge, track);
     });
   },
 
@@ -749,16 +763,17 @@ const InteractionHandler = {
 
   // shows/hides tracks based on whats selected
   applyFilters() {
+    const tracks = State.allTracks.length ? State.allTracks : PlaylistProcessor.extractTracks();
+    if (!State.activeGenres.length) {
+      window.__ytmeTagger?.clearFilters(tracks);
+    } else {
+      window.__ytmeTagger?.filterTracks(tracks, State.activeGenres);
+    }
+    UIManager.renderFilterIndicator();
     const shelf = document.querySelector(Config.selectors.playlistShelf)
                || document.querySelector('ytmusic-browse-response')
                || document.body;
     const trackElements = Array.from(shelf.querySelectorAll(Config.selectors.trackRow));
-    if (!State.activeGenres.length) {
-      window.__ytmeTagger?.clearFilters(trackElements);
-    } else {
-      window.__ytmeTagger?.filterTracks(trackElements, State.activeGenres);
-    }
-    UIManager.renderFilterIndicator();
     return { visible: trackElements.filter(el => el.style.display !== 'none').length, total: trackElements.length };
   },
 
@@ -769,7 +784,7 @@ const InteractionHandler = {
     if (!el.tagPicker) return;
 
     this._tagPickerTrack    = track;
-    this._tagPickerSelected = new Set(window.__ytmeTagger.getTags(track.idx)?.genres || []);
+    this._tagPickerSelected = new Set(window.__ytmeTagger.getTags(track)?.genres || []);
 
     if (el.tagTitle)  el.tagTitle.textContent  = track.rawTitle  || 'Unknown';
     if (el.tagArtist) el.tagArtist.textContent = track.rawArtist || '';
@@ -1135,23 +1150,19 @@ const MessageBridge = {
               playlistTitle: titleEl?.innerText?.trim() || document.title || 'My Playlist',
               stats,
             });
-            return true;
           }
 
           case 'APPLY_FILTERS':
             State.activeGenres = msg.genres || [];
             sendResponse(InteractionHandler.applyFilters());
-            return true;
 
           case 'GET_STATS':
             sendResponse({ stats: window.__ytmeTagger?.getStats(State.allTracks) ?? null });
-            return true;
 
           case 'NAVIGATED':
             console.log('[YTM-Enhancer] NAVIGATED message received', msg.url);
             Enhancer.softReset();
             sendResponse({ success: true });
-            return true;
 
           case 'THEME':
             applyThemeToHost(msg.themeId);
@@ -1161,7 +1172,6 @@ const MessageBridge = {
             document.documentElement.style.setProperty('--ytme-text', theme.text);
             document.documentElement.style.setProperty('--ytme-border', `color-mix(in srgb, ${theme.text} 15%, transparent)`);
             sendResponse({ success: true });
-            return true;
         }
       } catch (err) {
         console.error('[YTM-Enhancer] Message handler error:', err);
@@ -1171,10 +1181,37 @@ const MessageBridge = {
   },
 };
 
+function applyTags(trackElement) {
+  if (!trackElement || trackElement.nodeType !== 1) return; 
+  
+  const existingBadge = trackElement.querySelector('.ytme-genre-badge');
+  const existingBtn = trackElement.querySelector('button[title="Tag this track"]');
+  const wasTagged = trackElement.dataset.ytmeTagged === '1';
+
+  if (wasTagged && (!existingBadge || !existingBtn)) {
+    delete trackElement.dataset.ytmeTagged; 
+  }
+  
+  const tracks = PlaylistProcessor.extractTracks();
+  const track = tracks.find(t => t.element === trackElement);
+  if (!track) return;
+  
+  if (trackElement.dataset.ytmeTagged === '1' && existingBadge && existingBtn) {
+    if (existingBadge) UIManager._updateGenreBadge(existingBadge, track);
+    return;
+  }
+
+  UIManager.injectTrackUI(track);
+
+  const badge = trackElement.querySelector('.ytme-genre-badge');
+  if (badge) UIManager._updateGenreBadge(badge, track);
+}
+
 const DOMObserver = {
   _mutationObs:    null,
   _deltaObs:       null,
   _deltaInterval:  null,
+  _dragDropObs:    null,
 
   // watch for SPA navigation
   watchNavigation() {
@@ -1206,6 +1243,7 @@ const DOMObserver = {
   _stopNavigation() {
     this._mutationObs?.disconnect();
     this._mutationObs = null;
+    this._stopDragDropObserver();
   },
 
   // watch for new tracks after initial load (lazy loading)
@@ -1234,6 +1272,45 @@ const DOMObserver = {
   _stopDelta() {
     this._deltaObs?.disconnect();
     if (this._deltaInterval) clearInterval(this._deltaInterval);
+  },
+
+  // Drag-and-drop observer: captures childList changes when songs are moved
+  startDragDropObserver() {
+    if (this._dragDropObs) this._dragDropObs.disconnect();
+    
+    this._dragDropObs = new MutationObserver((mutations) => {
+      const nodesToProcess = new Set();
+
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList') {
+          mutation.addedNodes.forEach(node => {
+            if (node.nodeType !== 1) return;
+            if (node.tagName === 'YTMUSIC-RESPONSIVE-LIST-ITEM-RENDERER') {
+              nodesToProcess.add(node);
+            } else {
+              node.querySelectorAll('ytmusic-responsive-list-item-renderer')
+                  .forEach(n => nodesToProcess.add(n));
+            }
+          });
+        }
+      }
+    
+      if (!nodesToProcess.size) return;
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          nodesToProcess.forEach(applyTags);
+          UIManager.refreshAllBadges();
+        }, 80);
+      });
+    });
+
+    const playlistContainer = document.querySelector('ytmusic-playlist-shelf-renderer #contents') || document.body;
+    this._dragDropObs.observe(playlistContainer, { childList: true, subtree: true });
+  },
+
+  _stopDragDropObserver() {
+    this._dragDropObs?.disconnect();
+    this._dragDropObs = null;
   },
 };
 
@@ -1272,6 +1349,7 @@ const Enhancer = {
     State.allTracks = [];
     State.dupGroups = [];
     DOMObserver._stopDelta();
+    DOMObserver._stopDragDropObserver();
     // console.log('softReset called from:', window.location.href);
 
     // wipe stale tags so last playlist's data doesnt bleed in
@@ -1337,6 +1415,7 @@ const Enhancer = {
 
           await PlaylistProcessor.loadAll(autoloadEnabled);
           DOMObserver.startDelta(autoloadEnabled);
+          DOMObserver.startDragDropObserver();
 
           if (window.__ytmeTagger) {
             State.allTracks = PlaylistProcessor.extractTracks();

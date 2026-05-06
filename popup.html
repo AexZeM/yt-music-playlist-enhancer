@@ -147,6 +147,8 @@
     /* ── FOOTER & TOAST ── */
     .footer { padding: 16px; display: flex; align-items: center; justify-content: space-between; margin-top: auto; border-top: 1px solid var(--border-color); }
     .footer-link { font-family: 'DM Mono', monospace; font-size: 9px; color: color-mix(in srgb, var(--text-primary) 20%, transparent); background: none; border: none; cursor: pointer; letter-spacing: 0.1em; transition: color 0.2s; }
+    .review-btn { font-family: 'DM Mono', monospace; font-size: 9px; color: color-mix(in srgb, var(--text-primary) 80%, transparent); background: none; border: none; cursor: pointer; letter-spacing: 0.08em; transition: color 0.2s; display: flex; align-items: center; gap: 4px; }
+    .review-btn:hover { color: var(--accent-color); }
     .footer-link:hover { color: var(--text-primary); }
 
     #toast {
@@ -287,7 +289,7 @@
     <div class="header">
       <div class="header-left">
         <span class="app-name">YTM Playlist Enhancer</span>
-        <span class="app-version">v1.1.0</span>
+        <span class="app-version">v1.2.0</span>
       </div>
       <div class="header-right">
         <div class="status-dot-wrap">
@@ -335,9 +337,12 @@
 
     <div class="footer">
       <button class="footer-link" id="btn-refresh">Re-Sync</button>
-      <span class="signature">Made By AexZeM ✨</span>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+        <button class="review-btn" id="btn-review">⭐ Rate & Review</button>      
+        <span class="signature">Made By AexZeM ✨</span>
     </div>
   </div>
+</div>
 
   <div class="page" id="page-settings">
     <div class="header">

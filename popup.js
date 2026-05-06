@@ -24,6 +24,7 @@ const playlistName     = document.getElementById('playlist-name');
 const playlistMeta     = document.getElementById('playlist-meta');
 const toast            = document.getElementById('toast');
 const btnRefresh       = document.getElementById('btn-refresh');
+const btnReview        = document.getElementById('btn-review');
 const btnSettings      = document.getElementById('btn-settings');
 const btnBack          = document.getElementById('btn-back');
 const btnClearCache    = document.getElementById('btn-clear-cache');
@@ -385,6 +386,11 @@ btnRefresh.addEventListener('click', () => {
   cachedTracks = [];
   init();
 });
+
+btnReview.addEventListener('click', () => {
+  chrome.tabs.create({ url: 'https://chrome.google.com/webstore/detail/yt-music-playlist-enhance/aigenoggiahlkplokpmlhojfndombagg/reviews' });
+});
+
 
 
 // live update when tagger finishes enriching

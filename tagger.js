@@ -211,16 +211,16 @@ const TagStore = (() => {
 
   return {
     clear() { _map = new Map(); },
-    get(idx)          { return _map.get(idx); },
-    set(idx, tagData) { _map.set(idx, tagData); },
-    delete(idx)       { _map.delete(idx); },
-    has(idx)          { return _map.has(idx); },
+    get(track)          { return _map.get(_makeKey(track)); },
+    set(track, tagData) { _map.set(_makeKey(track), tagData); },
+    delete(track)       { _map.delete(_makeKey(track)); },
+    has(track)          { return _map.has(_makeKey(track)); },
 
     getStats(tracks) {
       const genreCounts = {};
       let untagged = 0;
       tracks.forEach(track => {
-        const tag = _map.get(track.idx);
+        const tag = _map.get(_makeKey(track));
         if (!tag?.genres?.length) { untagged++; return; }
         tag.genres.forEach(g => { genreCounts[g] = (genreCounts[g] || 0) + 1; });
       });
@@ -234,7 +234,7 @@ const TagStore = (() => {
           tracks.forEach(track => {
             const key = _makeKey(track);
             if (manual[key]) {
-              _map.set(track.idx, { genres: manual[key].genres || [], source: 'manual' });
+              _map.set(_makeKey(track), { genres: manual[key].genres || [], source: 'manual' });
             }
           });
           resolve();
@@ -248,7 +248,7 @@ const TagStore = (() => {
           const manual = data.ytme_manual_tags || {};
           manual[_makeKey(track)] = { genres, title: track.rawTitle, artist: track.rawArtist };
           chrome.storage.local.set({ ytme_manual_tags: manual }, () => {
-            _map.set(track.idx, { genres, source: 'manual' });
+            _map.set(_makeKey(track), { genres, source: 'manual' });
             window.dispatchEvent(new CustomEvent('ytme:tags-updated'));
             resolve();
           });
@@ -270,8 +270,8 @@ const TagStore = (() => {
     async savePlaylistSnapshot(playlistId, tracks) {
       if (!playlistId) return;
       const snapshot = {};
-      tracks.forEach((t, idx) => {
-        const tags = _map.get(idx);
+      tracks.forEach((t) => {
+        const tags = _map.get(_makeKey(t));
         if (tags?.genres?.length > 0) {
           snapshot[_makeKey(t)] = { genres: tags.genres, source: tags.source };
         }
@@ -291,9 +291,9 @@ const TagStore = (() => {
       if (!snapshot) return false;
 
       let applied = 0;
-      tracks.forEach((t, idx) => {
+      tracks.forEach((t) => {
         const cached = snapshot[_makeKey(t)];
-        if (cached?.genres?.length > 0) { _map.set(idx, cached); applied++; }
+        if (cached?.genres?.length > 0) { _map.set(_makeKey(t), cached); applied++; }
       });
       console.log(`[YTM-Tagger] Snapshot: ${applied} tags applied`);
       return true;
@@ -332,9 +332,9 @@ const GenreClassifier = (() => {
     applyRules(tracks) {
       let tagged = 0;
       tracks.forEach(track => {
-        if (TagStore.get(track.idx)?.source === 'manual') return;
+        if (TagStore.get(track)?.source === 'manual') return;
         const genres = this.classify(track);
-        if (genres.length) { TagStore.set(track.idx, { genres, source: 'rule' }); tagged++; }
+        if (genres.length) { TagStore.set(track, { genres, source: 'rule' }); tagged++; }
       });
       console.log(`[YTM-Tagger] Rules: ${tagged}/${tracks.length} tagged`);
     },
@@ -424,7 +424,7 @@ const LastFmClient = (() => {
 
       let apiTagged = 0;
       tracks.forEach(track => {
-        if (TagStore.get(track.idx)?.source === 'manual') return;
+        if (TagStore.get(track)?.source === 'manual') return;
         const allGenres = [];
         _splitArtists(track.rawArtist).forEach(artist => {
           const genres = cache[_normalizeArtist(artist)];
@@ -432,8 +432,8 @@ const LastFmClient = (() => {
         });
         if (!allGenres.length) return;
 
-        const existing = TagStore.get(track.idx);
-        TagStore.set(track.idx, {
+        const existing = TagStore.get(track);
+        TagStore.set(track, {
           genres: [...new Set([...(existing?.genres || []), ...allGenres])],
           source: existing?.source === 'rule' ? 'rule+api' : 'api',
         });
@@ -450,13 +450,15 @@ const LastFmClient = (() => {
 
 const FilterEngine = {
   // hide tracks that dont match active genres
-  apply(elements, activeGenres) {
+  apply(tracks, activeGenres) {
     const showUntagged = activeGenres.includes('Untagged');
     const realGenres   = activeGenres.filter(g => g !== 'Untagged');
     let visible = 0;
-    elements.forEach((el, idx) => {
+    tracks.forEach(track => {
+      const el = track.element;
+      if (!el) return;
       if (!activeGenres.length) { el.style.display = ''; visible++; return; }
-      const genres     = TagStore.get(idx)?.genres || [];
+      const genres     = TagStore.get(track)?.genres || [];
       const isUntagged = !genres.length;
       const match = (showUntagged && isUntagged) ||
                     (realGenres.length && realGenres.some(g => genres.includes(g)));
@@ -467,8 +469,8 @@ const FilterEngine = {
   },
 
   // show everything
-  clear(elements) {
-    elements.forEach(el => { el.style.display = ''; });
+  clear(tracks) {
+    tracks.forEach(track => { if (track.element) track.element.style.display = ''; });
   },
 };
 
@@ -521,10 +523,10 @@ window.__ytmeTagger = {
     });
   },
 
-  filterTracks:    (elements, genres) => FilterEngine.apply(elements, genres),
-  clearFilters:    elements           => FilterEngine.clear(elements),
+  filterTracks:    (tracks, genres) => FilterEngine.apply(tracks, genres),
+  clearFilters:    tracks           => FilterEngine.clear(tracks),
   getStats:        tracks             => TagStore.getStats(tracks),
-  getTags:         idx                => TagStore.get(idx),
+  getTags:         track                => TagStore.get(track),
   saveManualTag:   (track, genres)    => TagStore.saveManual(track, genres),
   removeManualTag: track              => TagStore.removeManual(track),
   _clearStore:     ()                 => TagStore.clear(),
